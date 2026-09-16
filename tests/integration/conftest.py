@@ -4,10 +4,11 @@ from urllib.parse import urlparse
 
 import pytest
 
+import darwin.research_store as _research_store
 from darwin.core.config import PostgresConfig
 from darwin.research_store.migrations import run_migrations
 
-import darwin.research_store as _rs; MIGRATIONS_DIR = Path(_rs.__file__).resolve().parent / "migrations_sql"
+MIGRATIONS_DIR = Path(_research_store.__file__).resolve().parent / "migrations_sql"
 
 
 def _config_from_dsn(dsn: str) -> PostgresConfig:
