@@ -3,7 +3,7 @@
 **Parent authority:** `PID.md`  
 **Product:** DARWIN  
 **Module/work package:** Foundation  
-**Status:** DRAFT FOR ARCHITECTURAL REVIEW  
+**Status:** APPROVED FOR IMPLEMENTATION  
 **Version:** 0.1.0  
 **Date:** 2026-09-16  
 **Implementation owner:** FORGE under ROGUE  

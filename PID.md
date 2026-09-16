@@ -7,7 +7,7 @@
 **Delivery controller:** ROGUE  
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
-**Status:** DRAFT FOR ARCHITECTURAL REVIEW  
+**Status:** APPROVED / AUTHORITATIVE  
 **Version:** 0.1.0  
 **Date:** 2026-09-16
 
