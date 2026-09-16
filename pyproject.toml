@@ -1,0 +1,41 @@
+[project]
+name = "darwin"
+version = "0.1.0"
+description = "DARWIN — XAUUSD strategy discovery, optimisation and independent proof factory (Foundation)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<0.116",
+  "uvicorn[standard]>=0.32,<0.33",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.5,<3",
+  "psycopg[binary]>=3.2,<4",
+  "PyMySQL>=1.1,<2",
+  "numpy>=2.1,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.24,<0.25",
+  "httpx>=0.27,<0.28",
+]
+
+[project.scripts]
+darwin = "darwin.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["darwin*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: requires a real disposable PostgreSQL instance (DARWIN_TEST_PG_DSN)",
+  "hermes_dev: requires real HERMES DEV credentials (DARWIN_TEST_HERMES_* env)",
+]
+
+[tool.setuptools.package-data]
+darwin = ["research_store/migrations_sql/*.sql"]

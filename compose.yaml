@@ -1,0 +1,61 @@
+name: darwin
+
+services:
+  darwin_sql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DARWIN_PG_DB:-darwin}
+      POSTGRES_USER: ${DARWIN_PG_USER:-darwin_app}
+      POSTGRES_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
+    volumes:
+      - darwin_sql_data:/var/lib/postgresql/data
+    networks:
+      - darwin_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DARWIN_PG_USER:-darwin_app} -d ${DARWIN_PG_DB:-darwin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Internal only — database ports are not treated as public APIs (PID-001 §6).
+
+  darwin_core:
+    build:
+      context: .
+      args:
+        DARWIN_BUILD_COMMIT: ${DARWIN_BUILD_COMMIT:-unknown}
+        DARWIN_BUILD_TIME: ${DARWIN_BUILD_TIME:-unknown}
+    depends_on:
+      darwin_sql:
+        condition: service_healthy
+    environment:
+      DARWIN_ENV: ${DARWIN_ENV:-dev}
+      DARWIN_PG_HOST: darwin_sql
+      DARWIN_PG_PORT: "5432"
+      DARWIN_PG_DB: ${DARWIN_PG_DB:-darwin}
+      DARWIN_PG_USER: ${DARWIN_PG_USER:-darwin_app}
+      DARWIN_PG_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
+      DARWIN_HERMES_HOST: ${DARWIN_HERMES_HOST:?DARWIN_HERMES_HOST must be set externally}
+      DARWIN_HERMES_PORT: ${DARWIN_HERMES_PORT:-3307}
+      DARWIN_HERMES_DB: ${DARWIN_HERMES_DB:-tradingSignals}
+      DARWIN_HERMES_USER: ${DARWIN_HERMES_USER:-darwin_ro}
+      DARWIN_HERMES_PASSWORD_FILE: /run/secrets/darwin_ro_credential
+      DARWIN_BUILD_VERSION: ${DARWIN_BUILD_VERSION:-0.1.0}
+      DARWIN_BUILD_COMMIT: ${DARWIN_BUILD_COMMIT:-unknown}
+      DARWIN_BUILD_TIME: ${DARWIN_BUILD_TIME:-unknown}
+      DARWIN_LOG_LEVEL: ${DARWIN_LOG_LEVEL:-INFO}
+    secrets:
+      - darwin_ro_credential
+    ports:
+      - "${DARWIN_CORE_PORT:-8000}:8000"
+    networks:
+      - darwin_net
+
+secrets:
+  darwin_ro_credential:
+    file: ${DARWIN_RO_CREDENTIAL_FILE:-./secrets/darwin_ro_credential_DO_NOT_COMMIT.txt}
+
+networks:
+  darwin_net: {}
+
+volumes:
+  darwin_sql_data: {}
