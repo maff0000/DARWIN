@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from darwin.core.build import build_info
 from darwin.core.config import DarwinConfig
-from darwin.core.errors import DarwinError, to_error_response
+from darwin.core.errors import DarwinError, NotReadyError, to_error_response
 from darwin.core.health import ComponentHealth, ComponentStatus, ReadinessReport
 from darwin.core.logging import configure_logging
 from darwin.hermes.reader import check_hermes_reachable
@@ -65,8 +65,7 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
         report = _readiness(cfg)
         counts = {"source_strategies": 0, "strategy_candidates": 0, "strategy_versions": 0,
                   "market_datasets": 0, "research_runs": 0}
-        pg_ok = any(c.name == "postgres" and c.status == ComponentStatus.OK for c in report.components)
-        if pg_ok:
+        if report.ready:
             try:
                 with connection(cfg.postgres) as conn:
                     counts["source_strategies"] = SourceStrategyRepository(conn).count()
@@ -85,18 +84,21 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
 
     @app.get("/api/v1/pipeline/summary")
     def pipeline_summary() -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
         with connection(cfg.postgres) as conn:
             counts = StrategyCandidateRepository(conn).counts_by_stage()
         return {"counts_by_stage": counts}
 
     @app.get("/api/v1/datasets")
     def list_datasets(limit: int = 50) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
         with connection(cfg.postgres) as conn:
             items = MarketDatasetRepository(conn).list(limit=limit)
         return {"items": items}
 
     @app.get("/api/v1/datasets/{dataset_id}")
     def get_dataset(dataset_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
         with connection(cfg.postgres) as conn:
             item = MarketDatasetRepository(conn).get(dataset_id)
         if item is None:
@@ -105,12 +107,14 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
 
     @app.get("/api/v1/runs")
     def list_runs(limit: int = 50) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
         with connection(cfg.postgres) as conn:
             items = ResearchRunRepository(conn).list(limit=limit)
         return {"items": items}
 
     @app.get("/api/v1/runs/{run_id}")
     def get_run(run_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
         with connection(cfg.postgres) as conn:
             item = ResearchRunRepository(conn).get(run_id)
         if item is None:
@@ -118,6 +122,21 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
         return item
 
     return app
+
+
+def _ensure_ready_for_data(report: ReadinessReport) -> None:
+    """Guard for endpoints that serve DARWIN's own persisted data.
+
+    Postgres/migrations not being OK means the underlying tables may not
+    exist yet — querying them would surface a raw, unhandled DB exception
+    as a 500. Fail loudly and cleanly instead (PID-001 §7/§10): a 503 with
+    an explicit NOT_READY code, never a bare traceback.
+    """
+    if not report.ready:
+        blocking_detail = ", ".join(
+            f"{c.name}={c.status.value}" for c in report.components if c.blocking and c.status != ComponentStatus.OK
+        )
+        raise NotReadyError(f"DARWIN is not ready to serve persisted data: {blocking_detail}")
 
 
 def _readiness(cfg: DarwinConfig) -> ReadinessReport:
@@ -149,6 +168,7 @@ def _readiness(cfg: DarwinConfig) -> ReadinessReport:
             "hermes_adapter",
             ComponentStatus.OK if hermes_ok else ComponentStatus.DEGRADED,
             "" if hermes_ok else "HERMES unreachable — historical work degraded, HERMES itself unaffected",
+            blocking=False,
         )
     )
 
