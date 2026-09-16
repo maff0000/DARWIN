@@ -116,3 +116,33 @@ def test_empty_dataset_has_stable_fingerprint_and_no_crash():
     assert ds.record_count == 0
     assert ds.fingerprint_sha256
     assert ds.actual_first_open_utc is None
+
+
+def test_gap_detection_anchors_to_actual_data_phase_not_requested_start():
+    # Real HERMES H4 candles open on a 02:00 UTC phase, not requested-start-
+    # anchored 00:00/04:00/08:00. A grid naively anchored to requested_start
+    # would report every real row as "missing" -- proven wrong against real
+    # data, regression-tested here with a synthetic equivalent.
+    from datetime import timedelta
+
+    from darwin.hermes.contract import Timeframe as TF
+    from tests.fixtures.hermes_rows import direct_h1_row
+
+    step = 4 * 3600
+    phase_start = UTC_2026_09_16_15.replace(hour=2, minute=0, second=0, microsecond=0)
+    rows = [
+        direct_h1_row(phase_start + timedelta(seconds=step * i), timeframe="H4", source_timeframe="H1")
+        for i in range(3)
+    ]
+    ds = build_market_dataset(
+        dataset_id="ds-phase",
+        instrument="XAU_USD",
+        timeframe=TF.H4,
+        requested_start_utc=phase_start.replace(hour=0),
+        requested_end_utc=phase_start + timedelta(seconds=step * 3),
+        rows=rows,
+        adapter_build_version="test",
+        loaded_at_utc=UTC_2026_09_16_15,
+    )
+    assert ds.gap_summary.missing_count == 0
+    assert ds.gap_summary.actual_count == 3

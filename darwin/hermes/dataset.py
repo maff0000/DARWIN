@@ -207,13 +207,35 @@ def compute_gap_summary(
     """Raw fixed-step expected-grid gap detection. Never fabricates, never
     forward-fills, never interpolates, never invents a trading-calendar
     doctrine — see PID-001 §18.
+
+    The expected grid is phase-anchored to the ACTUAL returned data, not to
+    an assumed UTC-midnight-aligned multiple of the timeframe step. Proven
+    necessary against real HERMES DEV data: H4 opens land on a 02:00 UTC
+    phase (02:00/06:00/10:00/...), and D1 opens land on 22:00 UTC, neither
+    aligned to a naive midnight-anchored grid. Anchoring the grid to
+    requested_start_utc instead of the data's own phase produced a false
+    100%-missing gap summary against a real load with zero actual gaps —
+    caught by the real HERMES DEV proof, not assumed correct from unit
+    tests alone (whose synthetic fixtures were always self-consistently
+    phase-aligned by construction and could not have caught this).
+    With zero actual rows there is no phase to anchor to, so the grid falls
+    back to requested_start_utc — the same honest "nothing to compare
+    against" case either way.
     """
     step = TIMEFRAME_STEP_SECONDS[timeframe]
     start_epoch = _epoch_seconds_utc(requested_start_utc)
     end_epoch = _epoch_seconds_utc(requested_end_utc)
 
-    expected = set(range(start_epoch, end_epoch, step))
     actual = {int(v) for v in open_time_epoch_s.tolist()}
+    if actual:
+        phase = min(actual) % step
+    else:
+        phase = start_epoch % step
+    grid_start = start_epoch - (start_epoch % step) + phase
+    if grid_start < start_epoch:
+        grid_start += step
+
+    expected = set(range(grid_start, end_epoch, step))
     missing = sorted(expected - actual)
 
     missing_iso = tuple(
