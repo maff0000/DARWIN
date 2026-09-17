@@ -4,10 +4,11 @@
 **Product:** DARWIN  
 **Module/work package:** Foundation  
 **Status:** APPROVED FOR IMPLEMENTATION  
-**Version:** 0.4.0  
+**Version:** 0.5.0  
 **Date:** 2026-09-17  
 **Amendment A-001 (2026-09-17):** multi-instrument substrate, additive to this acceptance gate — see §1a.  
 **Amendment A-002 (2026-09-17):** time/instrument unit semantics, additive to this acceptance gate — see §1b.  
+**Amendment A-003 (previously issued; incorporated 2026-09-17):** DIKE deterministic capital-protection identity substrate, additive to this acceptance gate — see §1d. No evaluator implemented.  
 **Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §1c. No implementation change required; identity compatibility already held.  
 **Implementation owner:** FORGE under ROGUE  
 **Infrastructure owner:** HELM outside FORGE
@@ -134,6 +135,49 @@ Central-architecture-owned doctrine (full text: `PID.md` §22a, `MEMORY.md` §2a
 **Confirmation, not a change:** Foundation's current identity model already satisfies A-004R1 without modification. `StrategyCandidate`, `StrategyVersion`, and `ResearchRun` (§20, amended by A-001/A-002 for instrument/timeframe/instrument-definition binding) carry no broker, broker-account, trader, TRON-instance, deployment-host, execution-venue, or NEO-instance field, and none is being added. `ParameterSetVersion`, `ExecutionPolicyVersion`, `DIKEPolicyVersion`, `SizingPolicyVersion`, `NewsContextPolicyVersion`, `BrokerContract`/`AdapterVersion`, and `TronInstanceId` remain reserved future identities, not implemented in PID-001 and not folded into `StrategyVersion`.
 
 No Foundation code change, migration, or test is required by this amendment. No current implementation scope is expanded. DARWIN's programme milestone (five XAUUSD strategies, A-001's multi-instrument foundation) is unchanged.
+
+---
+
+## 1d. Amendment A-003 — DIKE deterministic capital-protection identity substrate (previously issued; incorporated 2026-09-17)
+
+Full doctrine: `PID.md` §5.12/§22b, `MEMORY.md` §2b. Foundation implements **only** the immutable identity substrate below — explicitly **NO DIKE evaluator, no capital-state engine, no ATHENA DIKE optimisation, no APOLLO DIKE replay, and no TRON/NEO/PLUTUS implementation** of any kind. This is identity binding only, the same narrow posture as A-001/A-002.
+
+### Minimal implementation
+
+An explicit DIKE state on `ResearchRun`:
+
+```text
+DIKE_DISABLED | DIKE_GUARDED
+```
+
+Plus, when guarded: `dike_policy_id`, `dike_policy_version`, `dike_policy_fingerprint`.
+
+### Absence/presence invariant — no null/absence ambiguity
+
+```text
+DIKE_DISABLED  →  policy identity fields MUST be absent
+DIKE_GUARDED   →  all policy identity fields MUST be present
+```
+
+A `DIKE_DISABLED` run carrying any policy identity field is invalid and must be rejected at creation, exactly like an instrument/timeframe mismatch (§1a). A `DIKE_GUARDED` run missing any one of the three policy identity fields is invalid and must be rejected at creation. There is no third, ambiguous state — a run is unambiguously one or the other.
+
+### Persistence
+
+Add the DIKE state and the three policy-identity columns to `research_runs` via a **new** migration (e.g. `0004_...`) — do not rewrite the semantics of any previously applied migration (`0001`–`0003`). `market_datasets` is unaffected; DIKE is a `ResearchRun`-level concept, not a market-data concept.
+
+### API / read model
+
+`/runs` and `/runs/{id}` (§24) must preserve and expose the DIKE state and, when guarded, the policy identity fields — the same read-model discipline already applied to instrument/timeframe/instrument-definition binding.
+
+### Required regression coverage (before PR #2 merge)
+
+1. `DIKE_DISABLED` baseline round-trip (create, persist, read back — no policy identity fields present).
+2. `DIKE_GUARDED` identity round-trip (create, persist, read back — all three policy identity fields present and correct).
+3. `DIKE_GUARDED` missing any policy identity field is rejected at creation.
+4. `DIKE_DISABLED` carrying a contradictory policy identity field is rejected at creation.
+5. API/read model preserves DIKE state and identity through the full `ResearchRun` read path.
+
+No evaluator, capital-state engine, ATHENA optimisation, APOLLO replay, or TRON/NEO/PLUTUS implementation is authorised by this section.
 
 ---
 

@@ -8,10 +8,11 @@
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
 **Status:** APPROVED / AUTHORITATIVE  
-**Version:** 0.4.0  
+**Version:** 0.5.0  
 **Date:** 2026-09-17  
 **Amendment A-001 (2026-09-17):** multi-instrument product-boundary clarification, incorporated into §1.
 **Amendment A-002 (2026-09-17):** time/instrument unit semantics — see §7a.
+**Amendment A-003 (previously issued; incorporated into this branch 2026-09-17):** DIKE deterministic capital-protection doctrine — see §5.12/§22b.
 **Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §22a. Central-architecture-owned; DARWIN records compatibility only, no cross-system authority.
 
 ---
@@ -201,6 +202,7 @@ DARWIN
 ├── research_store/
 ├── hermes/
 ├── scheduler/
+├── dike/
 └── integrations/
 ```
 
@@ -407,6 +409,12 @@ It is not required to become a generic orchestration platform.
 Owns later controlled promotion/feedback boundaries such as CER, HELIOS and PLUTUS.
 
 These are deliberately deferred until DARWIN has first proven its own research pipeline and reached the initial five-strategy milestone threshold for promotion work.
+
+### 5.12 `dike` (Amendment A-003)
+
+Owns DARWIN's deterministic capital-protection policy research and proof responsibility — never enforcement. DARWIN researches and proves DIKE policy behaviour against historical evidence; TRON is the sole system that enforces a DIKE policy live. NEO may learn from and propose DIKE policy changes, but may never mutate or bypass an enforced policy directly. HELIOS remains DIKE/capital unaware — it evaluates strategy signals deterministically without any capital-protection awareness of its own. ATHENA may only search within an authorised DIKE parameter envelope declared by the candidate specification; APOLLO proves one exact frozen DIKE configuration causally, the same way it proves any other frozen candidate parameter. Qualification and ARENA must distinguish DIKE-guarded evidence from DIKE-disabled evidence explicitly — never blend them. DIKE policy identity is immutable and versioned, the same discipline as `StrategyVersion` (§10).
+
+See §22b for the full doctrine.
 
 ---
 
@@ -1051,6 +1059,33 @@ NEO is future local analytical intelligence; NEO feeds back, not in; NEO produce
 ### Milestone unaffected
 
 This amendment does not change DARWIN's current programme milestone (§2): at least five independently promising XAUUSD strategies discovered, normalised, optimised and sequentially proven using canonical HERMES history. Multi-instrument capability remains foundational (Amendment A-001); XAUUSD remains the first proving market. This amendment expands no current implementation scope — it records compatibility invariants only.
+
+---
+
+## 22b. Amendment A-003 — DIKE deterministic capital-protection doctrine (previously issued; incorporated 2026-09-17)
+
+DIKE is DARWIN's deterministic capital-protection policy domain (§5.12, `dike/`). This section records the durable doctrine; Foundation (§1a of `docs/pids/PID-001-FOUNDATION.md`) implements only the identity substrate, never an evaluator.
+
+### Responsibility split
+
+- **DARWIN researches and proves** DIKE policy behaviour against historical evidence — the same evidence discipline as any other candidate parameter (§11).
+- **TRON enforces live.** DARWIN never enforces a DIKE policy against live capital; that authority belongs entirely to TRON, consistent with Amendment A-004R1's boundary (§22a) — DARWIN is not given architectural authority over TRON.
+- **NEO may learn/propose, never mutate/bypass.** NEO may produce a hypothesis about a better DIKE policy; it may never directly mutate an enforced policy or bypass one, live or in DARWIN's own research evidence.
+- **HELIOS remains DIKE/capital unaware.** HELIOS's deterministic strategy evaluation carries no capital-protection or DIKE awareness of its own — that layer sits outside HELIOS entirely.
+- **ATHENA:** authorised DIKE parameter search only, exactly like any other execution-policy dimension the candidate specification opens for search (§13). ATHENA never invents an unauthorised DIKE search dimension.
+- **APOLLO:** proves one exact, frozen, causal DIKE configuration — the same discipline APOLLO applies to every other frozen candidate parameter (§8, §9). APOLLO does not optimise DIKE policy during proof.
+- **Qualification and ARENA** must distinguish DIKE-guarded evidence from DIKE-disabled evidence explicitly in every gate and every display — never blended, never presented as equivalent.
+
+### DIKE policy identity
+
+DIKE policy identity is immutable and versioned, the same discipline DARWIN already applies to `StrategyVersion` (§10) and `InstrumentDefinition` (§7a). A DIKE-guarded `ResearchRun` binds an explicit, durable `dike_policy_id`/`dike_policy_version`/`dike_policy_fingerprint`; a later redefinition of a DIKE policy must never silently change what past DIKE-guarded evidence meant.
+
+### Durable architectural invariants (recorded here; see also `MEMORY.md`)
+
+- **`DIKE_DISABLED` is the scientific baseline.** Research may run with DIKE disabled entirely — that is not an error state, it is the default, unguarded scientific condition.
+- **TRON's hard limits are sovereign; the stricter constraint always wins.** No DARWIN research configuration, however it is proven, may be interpreted as relaxing a TRON-enforced hard limit.
+- **No direct feedback mutation.** Nothing — not NEO, not SOCRATES, not any future automated process — may mutate a DIKE policy directly from a learned hypothesis; every change is a new, immutable, versioned policy that goes through the same research/proof discipline as any other candidate parameter.
+- **Historical evidence is never rewritten.** A later DIKE policy change never alters what an already-recorded `ResearchRun`'s DIKE identity meant at the time it ran.
 
 ---
 
