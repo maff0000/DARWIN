@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from darwin.core.dike import DikeState
 from darwin.core.evidence import EvidenceLevel
 from darwin.core.lifecycle import PipelineStage
 
@@ -82,6 +83,12 @@ class ResearchRun:
     from the bound MarketDataset -- historical evidence must always be able
     to answer what an instrument's price meant when the run was executed,
     even if InstrumentDefinition is redefined later.
+
+    `dike_state`/`dike_policy_id`/`dike_policy_version`/`dike_policy_fingerprint`
+    (Amendment A-003, PID-001 §1d) are identity binding only -- Foundation
+    never evaluates or enforces a DIKE policy. DIKE_DISABLED must carry no
+    policy identity; DIKE_GUARDED must carry all three -- no null/absence
+    ambiguity, enforced in darwin.research_store.run_binding.create_research_run.
     """
 
     id: str
@@ -97,6 +104,10 @@ class ResearchRun:
     version_id: str | None = None
     dataset_id: str | None = None
     configuration_fingerprint: str | None = None
+    dike_state: DikeState = DikeState.DISABLED
+    dike_policy_id: str | None = None
+    dike_policy_version: str | None = None
+    dike_policy_fingerprint: str | None = None
     created_at_utc: datetime | None = None
     updated_at_utc: datetime | None = None
 

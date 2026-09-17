@@ -159,8 +159,9 @@ class ResearchRunRepository:
                 INSERT INTO research_runs
                     (id, result_kind, engine, build_version, status,
                      instrument, instrument_definition_id, timeframe, display_title,
-                     candidate_id, version_id, dataset_id, configuration_fingerprint)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     candidate_id, version_id, dataset_id, configuration_fingerprint,
+                     dike_state, dike_policy_id, dike_policy_version, dike_policy_fingerprint)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     r.id,
@@ -176,6 +177,10 @@ class ResearchRunRepository:
                     r.version_id,
                     r.dataset_id,
                     r.configuration_fingerprint,
+                    r.dike_state.value,
+                    r.dike_policy_id,
+                    r.dike_policy_version,
+                    r.dike_policy_fingerprint,
                 ),
             )
 

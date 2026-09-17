@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from darwin.core.dike import DikeState
 from darwin.core.evidence import EvidenceLevel
 from darwin.core.identities import new_id
 from darwin.core.lifecycle import PipelineStage
@@ -124,3 +125,45 @@ def test_research_run_instrument_timeframe_title_persist_and_read_back(pg_config
         assert fetched["timeframe"] == "M15"
         assert fetched["result_kind"] == "APOLLO_PROOF"
         assert fetched["display_title"] == "<EUR_USD · M15> Mean Reversion v7 — APOLLO"
+
+
+def test_dike_disabled_baseline_roundtrip(pg_config):
+    """Amendment A-003 item 1: DIKE_DISABLED baseline round-trip -- no
+    policy identity fields present after persist+read-back."""
+    with connection(pg_config) as conn:
+        repo = ResearchRunRepository(conn)
+        run = create_research_run(
+            result_kind=EvidenceLevel.ATHENA_RESULT, engine="athena", build_version="test",
+            status="RUNNING", instrument="XAU_USD", instrument_definition_id="def-xau-v1",
+            timeframe="H1", run_type="ATHENA",
+        )
+        repo.create(run)
+        fetched = repo.get(run.id)
+        assert fetched["dike_state"] == "DIKE_DISABLED"
+        assert fetched["dike_policy_id"] is None
+        assert fetched["dike_policy_version"] is None
+        assert fetched["dike_policy_fingerprint"] is None
+
+
+def test_dike_guarded_identity_roundtrip(pg_config):
+    """Amendment A-003 items 2 + 5: DIKE_GUARDED round-trip preserves the
+    full policy identity through the same dict shape darwin.app's /runs
+    and /runs/{id} return (SELECT * FROM research_runs) -- proving the
+    API/read model preserves DIKE state and identity through the full
+    ResearchRun read path."""
+    with connection(pg_config) as conn:
+        repo = ResearchRunRepository(conn)
+        run = create_research_run(
+            result_kind=EvidenceLevel.APOLLO_PROOF, engine="apollo", build_version="test",
+            status="COMPLETE", instrument="XAU_USD", instrument_definition_id="def-xau-v1",
+            timeframe="H1", run_type="APOLLO",
+            dike_state=DikeState.GUARDED,
+            dike_policy_id="dike-conservative-v1", dike_policy_version="v1",
+            dike_policy_fingerprint="f" * 64,
+        )
+        repo.create(run)
+        fetched = repo.get(run.id)
+        assert fetched["dike_state"] == "DIKE_GUARDED"
+        assert fetched["dike_policy_id"] == "dike-conservative-v1"
+        assert fetched["dike_policy_version"] == "v1"
+        assert fetched["dike_policy_fingerprint"] == "f" * 64

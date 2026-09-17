@@ -9,7 +9,8 @@ instrument + timeframe + run type — see §1a "Run title / human visibility").
 """
 from __future__ import annotations
 
-from darwin.core.errors import RunBindingError
+from darwin.core.dike import DikeState
+from darwin.core.errors import DikePolicyBindingError, RunBindingError
 from darwin.core.evidence import EvidenceLevel
 from darwin.core.identities import new_id
 from darwin.hermes.contract import Timeframe
@@ -59,6 +60,10 @@ def create_research_run(
     dataset_timeframe: Timeframe | str | None = None,
     dataset_instrument_definition_id: str | None = None,
     configuration_fingerprint: str | None = None,
+    dike_state: DikeState = DikeState.DISABLED,
+    dike_policy_id: str | None = None,
+    dike_policy_version: str | None = None,
+    dike_policy_fingerprint: str | None = None,
 ) -> ResearchRun:
     """Construct a `ResearchRun`, rejecting an instrument or timeframe
     mismatch against its bound `MarketDataset` (§1a), and an
@@ -101,6 +106,13 @@ def create_research_run(
                 f"{dataset_instrument_definition_id!r} (dataset_id={dataset_id})"
             )
 
+    _validate_dike_binding(
+        dike_state=dike_state,
+        dike_policy_id=dike_policy_id,
+        dike_policy_version=dike_policy_version,
+        dike_policy_fingerprint=dike_policy_fingerprint,
+    )
+
     display_title = build_run_title(
         instrument=instrument,
         timeframe=timeframe,
@@ -123,4 +135,38 @@ def create_research_run(
         version_id=version_id,
         dataset_id=dataset_id,
         configuration_fingerprint=configuration_fingerprint,
+        dike_state=dike_state,
+        dike_policy_id=dike_policy_id,
+        dike_policy_version=dike_policy_version,
+        dike_policy_fingerprint=dike_policy_fingerprint,
     )
+
+
+def _validate_dike_binding(
+    *,
+    dike_state: DikeState,
+    dike_policy_id: str | None,
+    dike_policy_version: str | None,
+    dike_policy_fingerprint: str | None,
+) -> None:
+    """Amendment A-003 (PID-001 §1d): no null/absence ambiguity.
+    DIKE_DISABLED must carry no policy identity; DIKE_GUARDED must carry
+    all three -- never a silent partial state.
+    """
+    fields = {
+        "dike_policy_id": dike_policy_id,
+        "dike_policy_version": dike_policy_version,
+        "dike_policy_fingerprint": dike_policy_fingerprint,
+    }
+    present = sorted(name for name, value in fields.items() if value is not None)
+    if dike_state == DikeState.DISABLED:
+        if present:
+            raise DikePolicyBindingError(
+                f"DIKE_DISABLED run must not carry policy identity fields, got: {present}"
+            )
+    elif dike_state == DikeState.GUARDED:
+        missing = sorted(name for name, value in fields.items() if value is None)
+        if missing:
+            raise DikePolicyBindingError(
+                f"DIKE_GUARDED run is missing required policy identity fields: {missing}"
+            )

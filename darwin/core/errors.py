@@ -46,6 +46,16 @@ class RunBindingError(DarwinError):
     code = "RUN_BINDING_MISMATCH"
 
 
+class DikePolicyBindingError(DarwinError):
+    """A ResearchRun's DIKE state disagrees with its policy-identity fields
+    (Amendment A-003 -- PID-001 §1d). DIKE_DISABLED must carry no policy
+    identity; DIKE_GUARDED must carry all three. Rejected at creation,
+    never silently stored with an ambiguous absence/presence state.
+    """
+
+    code = "DIKE_POLICY_BINDING_MISMATCH"
+
+
 def to_error_response(exc: DarwinError) -> dict:
     """Sanitised error body — never includes secrets, stack traces, or connection strings."""
     return {"error": {"code": exc.code, "message": str(exc)}}
