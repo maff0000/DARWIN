@@ -4,10 +4,11 @@
 **Product:** DARWIN  
 **Module/work package:** Foundation  
 **Status:** APPROVED FOR IMPLEMENTATION  
-**Version:** 0.3.0  
+**Version:** 0.4.0  
 **Date:** 2026-09-17  
 **Amendment A-001 (2026-09-17):** multi-instrument substrate, additive to this acceptance gate — see §1a.  
 **Amendment A-002 (2026-09-17):** time/instrument unit semantics, additive to this acceptance gate — see §1b.  
+**Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §1c. No implementation change required; identity compatibility already held.  
 **Implementation owner:** FORGE under ROGUE  
 **Infrastructure owner:** HELM outside FORGE
 
@@ -123,6 +124,16 @@ The absence of a second real HERMES instrument is **not a PID-001 merge blocker*
 8. Naive user/request datetimes remain rejected at the public HERMES-read boundary.
 
 No strategy execution required.
+
+---
+
+## 1c. Amendment A-004R1 — federated execution / SOCRATES compatibility (2026-09-17)
+
+Central-architecture-owned doctrine (full text: `PID.md` §22a, `MEMORY.md` §2a). DARWIN records compatibility only — no authority over TRON, NEO, SOCRATES, brokers/execution infrastructure, or federation/fleet management, and no TRON/NEO/SOCRATES blueprint is authored here.
+
+**Confirmation, not a change:** Foundation's current identity model already satisfies A-004R1 without modification. `StrategyCandidate`, `StrategyVersion`, and `ResearchRun` (§20, amended by A-001/A-002 for instrument/timeframe/instrument-definition binding) carry no broker, broker-account, trader, TRON-instance, deployment-host, execution-venue, or NEO-instance field, and none is being added. `ParameterSetVersion`, `ExecutionPolicyVersion`, `DIKEPolicyVersion`, `SizingPolicyVersion`, `NewsContextPolicyVersion`, `BrokerContract`/`AdapterVersion`, and `TronInstanceId` remain reserved future identities, not implemented in PID-001 and not folded into `StrategyVersion`.
+
+No Foundation code change, migration, or test is required by this amendment. No current implementation scope is expanded. DARWIN's programme milestone (five XAUUSD strategies, A-001's multi-instrument foundation) is unchanged.
 
 ---
 

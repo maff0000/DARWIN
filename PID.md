@@ -8,10 +8,11 @@
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
 **Status:** APPROVED / AUTHORITATIVE  
-**Version:** 0.3.0  
+**Version:** 0.4.0  
 **Date:** 2026-09-17  
 **Amendment A-001 (2026-09-17):** multi-instrument product-boundary clarification, incorporated into §1.
 **Amendment A-002 (2026-09-17):** time/instrument unit semantics — see §7a.
+**Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §22a. Central-architecture-owned; DARWIN records compatibility only, no cross-system authority.
 
 ---
 
@@ -998,6 +999,58 @@ Future forward/demo/live-adjacent evidence may feed DARWIN research.
 No downstream system may silently rewrite an existing promoted strategy through DARWIN.
 
 New evidence may justify a new candidate version.
+
+---
+
+## 22a. Amendment A-004R1 — federated execution / SOCRATES compatibility (2026-09-17)
+
+**Authority note:** `A-004R1` is approved and locked by THE GOAL central architecture, which remains the cross-system authority. DARWIN is NOT given architectural authority over TRON, NEO, SOCRATES, brokers/execution infrastructure, or federation/fleet management by this section. DARWIN's task is only to remain permanently compatible with the approved future architecture. This section does not author a definitive TRON/NEO/SOCRATES programme blueprint — central architecture issues those authoritative PIDs/blueprints separately when their delivery waves begin. DARWIN records only the interfaces and invariants it must preserve today.
+
+### Canonical programme doctrine (central-architecture-owned, recorded here for DARWIN's compatibility)
+
+```text
+DARWIN proves strategies against instruments.
+HELIOS evaluates them deterministically.
+TRON executes approved configurations.
+Brokers are adapters.
+NEO learns locally and feeds back, not in.
+SOCRATES learns globally.
+DARWIN proves what NEO and SOCRATES think they have learned.
+
+Mechanical going forward. Intelligent looking backward.
+```
+
+### Strategy identity
+
+`StrategyVersion` is, and must remain, independent of: broker; broker account; trader; TRON instance; deployment host; execution venue; NEO instance. The same immutable `StrategyVersion` may be tested, and eventually deployed, in multiple independent execution environments. DARWIN's current identity model (§10, §20) already satisfies this by construction — no broker/account/TRON/venue field exists anywhere on `StrategyCandidate`, `StrategyVersion`, or `ResearchRun`.
+
+### Instrument-specific proof
+
+Unchanged from Amendment A-001, restated for emphasis: `StrategyVersion != proof on every instrument`. A strategy must be independently tested against each canonical `InstrumentId`. A strategy proven on `XAU_USD` is not thereby proven on `EUR_USD`, `BTC_USD`, `USD_JPY`, or any other instrument. A-001 remains authoritative.
+
+### Policy identity separation
+
+DARWIN must not design so that future deployment configuration collapses into `StrategyVersion` identity. Independent future identities are reserved (not implemented in PID-001): `StrategyVersion`; `ParameterSetVersion`; `ExecutionPolicyVersion`; `DIKEPolicyVersion`; `SizingPolicyVersion`; `NewsContextPolicyVersion` where applicable; `BrokerContract`/`AdapterVersion`. Each is a distinct future axis of identity, not a field folded into another.
+
+### Future execution-instance compatibility
+
+Compatibility with a future operational identity such as `TronInstanceId` is reserved. TRON and fleet management are NOT implemented now. `TronInstanceId` must never become part of `StrategyVersion` identity — an execution instance is where/how a proven strategy runs, never what makes the strategy itself immutable.
+
+### Evidence compatibility
+
+Today's identifiers must not prevent a future evidence envelope from associating: strategy/version; instrument; parameter set; execution policy; DIKE policy; sizing policy; context policy; execution-instance identity; broker/execution profile; normalized outcome; provenance. The complete future evidence envelope is explicitly NOT implemented during PID-001 — today's `ResearchRun`/`ATHENA_RESULT`/`APOLLO_PROOF` model (§11, §9) must simply not close off room for these associations later.
+
+### Broker abstraction
+
+Canonical principle: **brokers are adapters beneath TRON.** DARWIN must not encode broker assumptions in strategy semantics. Any wording implying an architectural concept such as an "OANDA Trading Cell," "Vantage Trading Cell," or "crypto Trading Cell" is superseded — those are execution resources/endpoints, not architectural identities. (Verified 2026-09-17: no such wording exists anywhere in DARWIN's current product-authority documents or source; this paragraph is a standing prohibition against introducing it, not a correction of an existing defect.)
+
+### NEO / SOCRATES compatibility doctrine (recorded, not implemented)
+
+NEO is future local analytical intelligence; NEO feeds back, not in; NEO produces hypotheses, not live discretionary decisions. SOCRATES is future population-level intelligence across multiple execution environments; SOCRATES also produces hypotheses only. Hypotheses from either return to DARWIN; DARWIN mechanically tests them before governed promotion — DARWIN proves what NEO and SOCRATES think they have learned. Neither NEO nor SOCRATES is implemented by this amendment.
+
+### Milestone unaffected
+
+This amendment does not change DARWIN's current programme milestone (§2): at least five independently promising XAUUSD strategies discovered, normalised, optimised and sequentially proven using canonical HERMES history. Multi-instrument capability remains foundational (Amendment A-001); XAUUSD remains the first proving market. This amendment expands no current implementation scope — it records compatibility invariants only.
 
 ---
 
