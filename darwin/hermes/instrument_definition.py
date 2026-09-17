@@ -79,6 +79,11 @@ _REGISTRY: dict[str, InstrumentDefinition] = {
 }
 
 
+def list_instrument_definitions() -> list[InstrumentDefinition]:
+    """All governed definitions, for read-only ARENA browsing (PID-002 sec12)."""
+    return list(_REGISTRY.values())
+
+
 def get_instrument_definition(instrument_id: str) -> InstrumentDefinition:
     """The only supported way to obtain a governed InstrumentDefinition.
     Raises for anything not in the closed registry -- never fabricates or
