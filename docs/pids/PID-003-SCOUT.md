@@ -91,7 +91,16 @@ data, never republished as DARWIN's own proof) is consistent with the access pat
 site's own public browse page performs anonymously.
 
 **Rate limiting:** no throttling observed on 10 rapid sequential public requests in this
-preflight; SCOUT still implements bounded timeouts/retries/pacing regardless (see §10).
+preflight; SCOUT still implements bounded timeouts/retries/pacing regardless (see §5).
+
+*Implementation-time correction (2026-09-17):* the original preflight's "(see §10)"
+cross-reference above pointed at a section that did not exist in this document (§5
+"Network/security boundary" is where the bounded timeouts/retries/pacing are actually
+specified and implemented — `darwin/scout/trader_dev_adapter.py`'s `CONNECT_TIMEOUT_S`/
+`READ_TIMEOUT_S`/`MAX_ATTEMPTS`/`RETRY_BACKOFF_S`). Fixed to `§5` here rather than left
+dangling now that a real `§10` exists below (the 2026-09-17 Workshop/Specification
+amendment) and would otherwise be confused for the rate-limiting detail this sentence
+means.
 
 **Conclusion:** a stable, sufficient, genuinely public discovery contract exists. No
 Playwright/Chromium/Node browser automation is needed or added. No API key is needed.
@@ -174,3 +183,78 @@ qualification, promotion, HELIOS/TRON/NEO/SOCRATES/PLUTUS integration, generic s
 continuous crawling, live trading, broker adapters, fuzzy/LLM family classification, or
 canonical source-symbol→HERMES instrument mapping. Runtime remains `DARWIN_core` +
 `DARWIN_sql` only.
+
+## 10. Amendment (2026-09-17) — SCOUT vs Strategy Workshop vs Specification
+
+The Architect has ruled that the canonical research flow is:
+
+`SCOUT` → `Strategy Workshop` → deterministic `Specification` → immutable
+`StrategyVersion` → `ATHENA` → `APOLLO`.
+
+Strategy Workshop is a future ARENA experience over a future `specification/` capability.
+It is not a separate microservice. **PID-003 implements Discovery only.** PID-004 (not
+this PID) will implement Strategy Workshop + Specification, using a bounded filesystem
+workspace (`/srv/DARWIN/workspaces/<workshop-id>/` with `DISCOVERY.json`,
+`CONTEXT.md`, `QUESTIONS.md`, `DECISIONS.jsonl`, `SPECIFICATION_DRAFT.json`,
+`VALIDATION.json`) for a governed Claude Code reasoning partner — never an unrestricted
+FastAPI-launched process, never direct StrategyVersion creation or lifecycle promotion
+from the Workshop itself. PID-004 will also inspect and absorb useful proven standalone
+HSA capability (ambiguity refusal, deterministic decomposition, timeframe semantics,
+atomic-condition concepts, tuning ranges, immutable version semantics) rather than
+duplicate it from scratch; HSA is not retired during PID-003 or merely because
+replacement code exists during PID-004 — retirement requires demonstrable replacement,
+evidence/acceptance, and explicit central-architecture closure.
+
+Revised canonical PID sequence: PID-002 ARENA → **PID-003 SCOUT/Discovery** → PID-004
+Strategy Workshop + Specification → PID-005 ATHENA → PID-006 APOLLO → PID-007
+Qualification → PID-008 Continuous Factory. This changes sequencing/product experience
+only — the programme's first milestone (five independently promising XAUUSD strategies
+discovered, normalised, optimised and sequentially proven against canonical HERMES
+history) is unchanged.
+
+This amendment extends PID-003's scope within Discovery (not into Workshop/Specification):
+
+- **Manual discovery.** Matt must be able to add strategies he finds himself, via a
+  `+ Add Strategy` ARENA flow. Two new provenance classes distinct from adapter-sourced
+  discoveries: `USER_DISCOVERED` (an idea found outside SCOUT's automated adapter — a
+  website, TradingView, Reddit, YouTube, a paper, a forum, a trader, etc. — with optional
+  title, origin description, URL/reference, source symbol/timeframe, original
+  description, pasted inert rule/code text, claimed metrics if supplied, personal notes,
+  tags) and `MY_IDEA` (a hypothesis that originated with Matt, not an external source —
+  legitimately has no URL, no external source, and no SOURCE_CLAIM metrics at all; still
+  a valid `DISCOVERED` strategy). Any performance figure entered manually remains
+  `SOURCE_CLAIM`. Never fabricate an external source identity for an internally
+  originated idea.
+- **Source fidelity.** SCOUT preserves what a source said; it never silently completes
+  ambiguous trading semantics (e.g. "trade a London breakout" is stored as written — SCOUT
+  does not decide session timezone, wick-vs-close, breakout buffer, SL/TP, DST, or entry
+  timing; those questions belong to Strategy Workshop/Specification).
+- **Intake states** gain `IN_WORKSHOP` (operational workflow only — not an evidence
+  level, not a research result, not a canonical strategy lifecycle state): `NEW` |
+  `SHORTLISTED` | `IN_WORKSHOP` | `READY_FOR_SPECIFICATION` | `REJECTED`. No PID-003
+  action may produce `SPECIFIED` or a canonical `StrategyVersion`.
+- **ARENA Discovery becomes DARWIN's strategy radar/intelligence inbox**, not a plain
+  CRUD table: status counts by intake state, source health, latest discovery-run status,
+  a claimed-performance leaderboard (default sort: highest claimed return first, where
+  comparable source data exists; alternative sorts by PF/Sharpe/Sortino/drawdown/trade
+  count/recency), and restrained visualisations — claimed return vs claimed drawdown
+  (scatter-style, so high-return/high-drawdown claims are visually distinguishable from
+  lower-return/lower-drawdown ones) and claimed profit-factor vs trade-count context (so
+  a thin sample size is visually obvious, without implying statistical validity). Every
+  leaderboard/visualisation is a **display/triage ordering only**, unmistakably labelled
+  `SOURCE_CLAIM — NOT INDEPENDENTLY VERIFIED BY DARWIN`, never DARWIN endorsement, never a
+  composite/success score. A discovery-priority score is architecturally permitted later
+  only if transparently defined, its inputs visible, explicitly labelled as
+  prioritisation, and never presented as evidence — not required or built in PID-003.
+  Discovery detail exposes a truthful `Open Workshop` / `Prepare Workshop` affordance
+  that is honestly disabled/future-state (no dead button masquerading as live
+  functionality) since PID-004 does not exist yet — it must not invoke Claude Code,
+  create AI sessions, generate rules, create a `StrategyVersion`, mark anything
+  `SPECIFIED`, or silently resolve ambiguity.
+- **Material Workshop decision trail** (ambiguity/question, resolution, origin,
+  rationale, timestamp UTC, accepted state — the decision trail, never the raw chat
+  transcript) is recorded here as durable forward doctrine for PID-004; it is not
+  implemented in PID-003.
+
+No contradiction with `PID.md` was identified; this amendment refines PID-003's own scope
+and records forward doctrine for PID-004 without altering the master constitution.
