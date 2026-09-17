@@ -192,19 +192,33 @@
   background: var(--panel-raised);
   border-left-color: var(--signal);
 }
-.left-nav__dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--ink-faint);
+.left-nav__icon {
+  color: var(--ink-faint);
   flex-shrink: 0;
 }
-.left-nav__link--active .left-nav__dot {
-  background: var(--signal);
+.left-nav__link:hover .left-nav__icon {
+  color: var(--ink-dim);
+}
+.left-nav__link--active .left-nav__icon {
+  color: var(--signal);
 }
 .left-nav--collapsed .left-nav__link {
   justify-content: center;
   padding: 9px 0;
+}
+.left-nav__tooltip {
+  position: fixed;
+  transform: translateY(-50%);
+  background: var(--panel-raised);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  z-index: 50;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
 /* ---------- status badge ---------- */
@@ -290,6 +304,13 @@
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
+}
+/* A panel that directly frames a data table gets its own horizontal scroll
+   container, so a table that can't fit a narrower viewport scrolls inside
+   its own border rather than clipping or forcing the whole page to scroll
+   sideways (shell refinement §1 — no horizontal clipping at any width). */
+.panel:has(> .data-table) {
+  overflow-x: auto;
 }
 .panel-heading {
   font-size: 13px;
@@ -541,11 +562,13 @@
 }
 
 @media (max-width: 900px) {
-  .left-nav {
-    position: absolute;
-    z-index: 10;
-    height: calc(100% - var(--topbar-h));
-  }
+  /* The rail used to switch to position:absolute here, which overlaid
+     .app-shell__main instead of sharing space with it — content could sit
+     underneath it, invisible. The flex layout above (.left-nav flex-shrink:0
+     + .app-shell__main flex:1 min-width:0) already gives the rail its own
+     track at every width, expanded or collapsed, with no overlay and no
+     JS/breakpoint state to keep in sync — so narrower viewports only need
+     the content reflow below, not a positioning switch for the rail. */
   .kv-row {
     grid-template-columns: 1fr;
   }

@@ -1,7 +1,32 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { NAV } from "../nav";
+import { NavIcon } from "./NavIcon";
+
+interface TooltipState {
+  label: string;
+  top: number;
+  left: number;
+}
 
 export function LeftNav({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+
+  // Collapsing/expanding invalidates any tooltip position we had cached
+  // against the previous layout.
+  useEffect(() => {
+    setTooltip(null);
+  }, [collapsed]);
+
+  function showTooltip(label: string, el: HTMLElement) {
+    if (!collapsed) return;
+    const rect = el.getBoundingClientRect();
+    setTooltip({ label, top: rect.top + rect.height / 2, left: rect.right + 8 });
+  }
+  function hideTooltip() {
+    setTooltip(null);
+  }
+
   return (
     <nav className={`left-nav ${collapsed ? "left-nav--collapsed" : ""}`} aria-label="Primary">
       <button
@@ -26,8 +51,12 @@ export function LeftNav({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                     className={({ isActive }) =>
                       `left-nav__link ${isActive ? "left-nav__link--active" : ""}`
                     }
+                    onMouseEnter={(e) => showTooltip(item.label, e.currentTarget)}
+                    onMouseLeave={hideTooltip}
+                    onFocus={(e) => showTooltip(item.label, e.currentTarget)}
+                    onBlur={hideTooltip}
                   >
-                    <span className="left-nav__dot" aria-hidden="true" />
+                    <NavIcon name={item.icon} className="left-nav__icon" />
                     {!collapsed && <span>{item.label}</span>}
                     {collapsed && <span className="visually-hidden">{item.label}</span>}
                   </NavLink>
@@ -37,6 +66,16 @@ export function LeftNav({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           </div>
         ))}
       </div>
+      {collapsed && tooltip && (
+        <div
+          className="left-nav__tooltip"
+          role="presentation"
+          aria-hidden="true"
+          style={{ top: tooltip.top, left: tooltip.left }}
+        >
+          {tooltip.label}
+        </div>
+      )}
     </nav>
   );
 }
