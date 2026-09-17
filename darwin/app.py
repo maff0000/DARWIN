@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from darwin.core.build import build_info
 from darwin.core.config import DarwinConfig
@@ -29,10 +30,18 @@ from darwin.research_store.migrations import migration_state
 from darwin.research_store.repositories import (
     MarketDatasetRepository,
     ResearchRunRepository,
+    ScoutDiscoveryRepository,
+    ScoutDiscoveryRunRepository,
+    ScoutSnapshotRepository,
+    ScoutSourceRepository,
     SourceStrategyRepository,
     StrategyCandidateRepository,
     StrategyVersionRepository,
 )
+from darwin.scout import service as scout_service
+from darwin.scout.domain import IntakeStatus, OriginKind
+from darwin.scout.service import MAX_RECORDS_PER_RUN, ScoutRequestError
+from darwin.scout.trader_dev_adapter import ALLOWED_SORTS as SCOUT_ALLOWED_SORTS
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +52,56 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "research_store" / "migration
 # this directory either exists (persistent/Docker deployment) or doesn't
 # (plain `uvicorn` dev run against the API only) — both are valid.
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+# --- PID-003 SCOUT request models ---------------------------------------
+#
+# Deliberately module-level, not nested inside create_app(): this file uses
+# `from __future__ import annotations` (PEP 563 deferred evaluation), and
+# FastAPI resolves a route's string annotations via `typing.get_type_hints`
+# against the endpoint function's `__globals__` only -- a Pydantic model
+# defined as a local inside create_app() is reachable at call time via
+# closure, but NOT via __globals__, so FastAPI would silently fail to
+# recognise it as a request-body model (observed directly: it degraded to
+# an unresolvable "query" parameter named "body", a false 422 on every
+# request). Every request-body model in this file must stay module-level.
+
+
+class ScoutDiscoverRequest(BaseModel):
+    """Bounded on-demand discovery run (PID-003 sec6). No raw URL parameter
+    exists here or anywhere in SCOUT -- only these deliberately narrow,
+    sensible filters."""
+
+    symbol: str | None = None
+    max_records: int = Field(default=25, ge=1, le=MAX_RECORDS_PER_RUN)
+    sort: str = "recent"
+
+
+class ScoutManualDiscoveryRequest(BaseModel):
+    """Human-typed manual entry (Amendment 2026-09-17, PID-003 sec10) -- a
+    SEPARATE concern from /scout/discover: no adapter is ever called, no
+    fetch of any URL is ever triggered by this endpoint."""
+
+    origin_kind: OriginKind
+    title: str = Field(min_length=1)
+    origin_description: str | None = None
+    origin_url: str | None = None
+    source_symbol: str | None = None
+    source_timeframe: str | None = None
+    original_description: str | None = None
+    pasted_rule_text: str | None = None
+    personal_notes: str | None = None
+    tags: tuple[str, ...] = ()
+    claimed_metrics: dict | None = None
+
+
+class ScoutIntakeStatusRequest(BaseModel):
+    """Narrow, explicit allowed-transition request (PID-003 sec6). No
+    generic patch-everything endpoint exists anywhere in SCOUT."""
+
+    target_status: IntakeStatus
+    changed_by: str = Field(min_length=1)
+    reason: str | None = None
 
 
 def create_app(config: DarwinConfig | None = None) -> FastAPI:
@@ -157,6 +216,122 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
         not the applied/pending version lists ARENA's Migrations page needs.
         No migration-execution path exists here or anywhere in ARENA."""
         return migration_state(cfg.postgres, MIGRATIONS_DIR)
+
+    # --- PID-003 SCOUT: discovery API surface (docs/pids/PID-003-SCOUT.md sec6) ---
+
+    @app.get("/api/v1/scout/status")
+    def scout_status_endpoint() -> dict:
+        """Source reachability/last-run summary, SCOUT-scoped. Deliberately
+        NEVER calls `_ensure_ready_for_data`/`_readiness` -- a Trader.dev
+        outage (or even a not-yet-migrated DARWIN_sql) must never make this
+        endpoint fail, and must never be folded into `/api/v1/ready`
+        (PID-003 sec5: "source unavailability degrades SCOUT's own status
+        only, never DARWIN core readiness/health")."""
+        try:
+            pg_ok = check_postgres_reachable(cfg.postgres)
+        except Exception:  # noqa: BLE001 - status must never itself fail
+            pg_ok = False
+        if not pg_ok:
+            return scout_service.scout_status(None)
+        with connection(cfg.postgres) as conn:
+            return scout_service.scout_status(conn)
+
+    @app.get("/api/v1/scout/sources")
+    def scout_sources_endpoint() -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            return {"items": ScoutSourceRepository(conn).list()}
+
+    @app.get("/api/v1/scout/discovery-runs")
+    def scout_discovery_runs_endpoint(limit: int = 50) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            return {"items": ScoutDiscoveryRunRepository(conn).list(limit=limit)}
+
+    @app.get("/api/v1/scout/discovery-runs/{run_id}")
+    def scout_discovery_run_detail_endpoint(run_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            item = ScoutDiscoveryRunRepository(conn).get(run_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="discovery run not found")
+        return item
+
+    @app.get("/api/v1/scout/discoveries")
+    def scout_discoveries_endpoint(
+        symbol: str | None = None,
+        intake_status: str | None = None,
+        origin_kind: str | None = None,
+        sort: str = "recent",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            repo = ScoutDiscoveryRepository(conn)
+            items = repo.list(
+                symbol=symbol, intake_status=intake_status, origin_kind=origin_kind,
+                sort=sort, limit=limit, offset=offset,
+            )
+            counts_by_intake_status = repo.counts_by_intake_status()
+        return {"items": items, "counts_by_intake_status": counts_by_intake_status}
+
+    @app.get("/api/v1/scout/discoveries/{discovery_id}")
+    def scout_discovery_detail_endpoint(discovery_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            discovery_repo = ScoutDiscoveryRepository(conn)
+            item = discovery_repo.get(discovery_id)
+            if item is None:
+                raise HTTPException(status_code=404, detail="discovery not found")
+            snapshots = ScoutSnapshotRepository(conn).list_for_discovery(discovery_id)
+            audit_history = discovery_repo.list_intake_audit(discovery_id)
+        return {"discovery": item, "snapshots": snapshots, "intake_audit_history": audit_history}
+
+    @app.post("/api/v1/scout/discover")
+    def scout_discover_endpoint(body: ScoutDiscoverRequest) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        if body.sort not in SCOUT_ALLOWED_SORTS:
+            raise ScoutRequestError(
+                f"sort {body.sort!r} is not one of the allowed sort values: {sorted(SCOUT_ALLOWED_SORTS)}"
+            )
+        with connection(cfg.postgres) as conn:
+            run = scout_service.run_discovery(
+                conn, symbol=body.symbol, max_records=body.max_records, sort=body.sort
+            )
+        return {"discovery_run": run}
+
+    @app.post("/api/v1/scout/discoveries")
+    def scout_create_manual_discovery_endpoint(body: ScoutManualDiscoveryRequest) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            discovery = scout_service.create_manual_discovery(
+                conn,
+                origin_kind=body.origin_kind,
+                title=body.title,
+                origin_description=body.origin_description,
+                origin_url=body.origin_url,
+                source_symbol=body.source_symbol,
+                source_timeframe=body.source_timeframe,
+                original_description=body.original_description,
+                pasted_rule_text=body.pasted_rule_text,
+                personal_notes=body.personal_notes,
+                tags=body.tags,
+                claimed_metrics=body.claimed_metrics,
+            )
+        return {"discovery": discovery}
+
+    @app.post("/api/v1/scout/discoveries/{discovery_id}/intake-status")
+    def scout_intake_status_endpoint(discovery_id: str, body: ScoutIntakeStatusRequest) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            discovery_repo = ScoutDiscoveryRepository(conn)
+            if discovery_repo.get(discovery_id) is None:
+                raise HTTPException(status_code=404, detail="discovery not found")
+            updated = discovery_repo.set_intake_status(
+                discovery_id, body.target_status, changed_by=body.changed_by, reason=body.reason
+            )
+        return {"discovery": updated}
 
     _mount_arena(app)
 

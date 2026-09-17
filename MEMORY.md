@@ -298,3 +298,19 @@ Do not select distributed/high-volume research infrastructure before real ATHENA
 There is no remaining HERMES discovery or access blocker for DARWIN Foundation.
 
 Do not modify HERMES as part of DARWIN Foundation work.
+
+---
+
+## 11. SCOUT vs Strategy Workshop vs Specification (2026-09-17)
+
+`SCOUT` (PID-003) captures external `SOURCE_CLAIM` discovery provenance only — adapter-
+sourced (Trader.dev) and manual (`USER_DISCOVERED`/`MY_IDEA`) — and never decides
+ambiguous trading semantics or produces a `StrategyVersion`. A future `Strategy Workshop`
+(part of PID-004, bundled with `Specification`) is where ambiguity gets resolved into a
+deterministic specification; SCOUT and Workshop/Specification are never the same module.
+
+Revised canonical PID sequence: PID-002 ARENA → PID-003 SCOUT → PID-004 Strategy
+Workshop + Specification → PID-005 ATHENA → PID-006 APOLLO → PID-007 Qualification →
+PID-008 Continuous Factory. This is a sequencing/scope clarification only — the
+programme's first milestone (§1: five independently promising XAUUSD strategies) is
+unchanged.

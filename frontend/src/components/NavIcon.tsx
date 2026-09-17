@@ -24,6 +24,15 @@ const PATHS: Record<NavIconName, JSX.Element> = {
       <path d="M3 8c0 .94 2.24 1.7 5 1.7s5-.76 5-1.7" />
     </>
   ),
+  // Discovery — radar sweep (SCOUT scans an external surface for a signal)
+  discovery: (
+    <>
+      <circle cx="8" cy="8" r="1.15" />
+      <path d="M8 8V3.2" />
+      <path d="M5.05 5.05a4.5 4.5 0 0 1 5.9 0" />
+      <path d="M3.15 3.15a6.85 6.85 0 0 1 9.7 0" />
+    </>
+  ),
   // Research Runs — activity trace
   runs: (
     <path d="M1.8 8.4h3.1l1.6-4.4 2.7 8.3 1.5-3.9h3.5" />
