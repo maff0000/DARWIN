@@ -37,12 +37,12 @@ def test_two_instruments_produce_separate_datasets_with_different_fingerprints()
     )
 
     xau_dataset = build_market_dataset(
-        dataset_id="d-xau", instrument="XAU_USD", timeframe=Timeframe.H1,
+        dataset_id="d-xau", instrument="XAU_USD", instrument_definition_id="def-xau-v1", timeframe=Timeframe.H1,
         requested_start_utc=UTC_2026_09_16_15, requested_end_utc=UTC_2026_09_16_15 + timedelta(hours=3),
         rows=xau_validated, adapter_build_version="test", loaded_at_utc=UTC_2026_09_16_15,
     )
     eur_dataset = build_market_dataset(
-        dataset_id="d-eur", instrument="EUR_USD", timeframe=Timeframe.H1,
+        dataset_id="d-eur", instrument="EUR_USD", instrument_definition_id="def-eur-v1", timeframe=Timeframe.H1,
         requested_start_utc=UTC_2026_09_16_15, requested_end_utc=UTC_2026_09_16_15 + timedelta(hours=3),
         rows=eur_validated, adapter_build_version="test", loaded_at_utc=UTC_2026_09_16_15,
     )
@@ -85,12 +85,12 @@ def test_dataset_fingerprint_depends_on_instrument_not_just_prices():
     eur_row = direct_h1_row(UTC_2026_09_16_15, instrument="EUR_USD", **row_kwargs)
 
     xau_dataset = build_market_dataset(
-        dataset_id="d1", instrument="XAU_USD", timeframe=Timeframe.H1,
+        dataset_id="d1", instrument="XAU_USD", instrument_definition_id="def-xau-v1", timeframe=Timeframe.H1,
         requested_start_utc=UTC_2026_09_16_15, requested_end_utc=UTC_2026_09_16_15 + timedelta(hours=1),
         rows=[xau_row], adapter_build_version="test", loaded_at_utc=UTC_2026_09_16_15,
     )
     eur_dataset = build_market_dataset(
-        dataset_id="d2", instrument="EUR_USD", timeframe=Timeframe.H1,
+        dataset_id="d2", instrument="EUR_USD", instrument_definition_id="def-eur-v1", timeframe=Timeframe.H1,
         requested_start_utc=UTC_2026_09_16_15, requested_end_utc=UTC_2026_09_16_15 + timedelta(hours=1),
         rows=[eur_row], adapter_build_version="test", loaded_at_utc=UTC_2026_09_16_15,
     )

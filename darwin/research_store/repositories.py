@@ -103,15 +103,17 @@ class MarketDatasetRepository:
             cur.execute(
                 """
                 INSERT INTO market_datasets
-                    (id, instrument, timeframe, requested_start_utc, requested_end_utc,
+                    (id, instrument, instrument_definition_id, timeframe,
+                     requested_start_utc, requested_end_utc,
                      actual_first_open_utc, actual_last_open_utc, record_count,
                      fingerprint_sha256, hermes_contract_version, hermes_contract_commit,
                      adapter_build_version, gap_summary, loaded_at_utc)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     d.id,
                     d.instrument,
+                    d.instrument_definition_id,
                     d.timeframe,
                     d.requested_start_utc,
                     d.requested_end_utc,
@@ -156,9 +158,9 @@ class ResearchRunRepository:
                 """
                 INSERT INTO research_runs
                     (id, result_kind, engine, build_version, status,
-                     instrument, timeframe, display_title,
+                     instrument, instrument_definition_id, timeframe, display_title,
                      candidate_id, version_id, dataset_id, configuration_fingerprint)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     r.id,
@@ -167,6 +169,7 @@ class ResearchRunRepository:
                     r.build_version,
                     r.status,
                     r.instrument,
+                    r.instrument_definition_id,
                     r.timeframe,
                     r.display_title,
                     r.candidate_id,

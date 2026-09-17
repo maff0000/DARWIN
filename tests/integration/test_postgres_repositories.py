@@ -64,6 +64,7 @@ def test_market_dataset_metadata_persists_and_reads_back(pg_config):
         record = MarketDatasetRecord(
             id=dataset_id,
             instrument="XAU_USD",
+            instrument_definition_id="def-xau-v1",
             timeframe="H1",
             requested_start_utc=datetime(2026, 9, 16, 15, tzinfo=UTC),
             requested_end_utc=datetime(2026, 9, 16, 18, tzinfo=UTC),
@@ -92,7 +93,8 @@ def test_research_run_lifecycle(pg_config):
         repo = ResearchRunRepository(conn)
         run = create_research_run(
             result_kind=EvidenceLevel.ATHENA_RESULT, engine="foundation-proof",
-            build_version="test", status="RUNNING", instrument="XAU_USD", timeframe="H1",
+            build_version="test", status="RUNNING", instrument="XAU_USD",
+            instrument_definition_id="def-xau-v1", timeframe="H1",
             run_type="ATHENA", strategy_title="Foundation proof strategy", version_label="v1",
         )
         repo.create(run)
@@ -111,12 +113,14 @@ def test_research_run_instrument_timeframe_title_persist_and_read_back(pg_config
         repo = ResearchRunRepository(conn)
         run = create_research_run(
             result_kind=EvidenceLevel.APOLLO_PROOF, engine="apollo-proof", build_version="test",
-            status="COMPLETE", instrument="EUR_USD", timeframe="M15", run_type="APOLLO",
+            status="COMPLETE", instrument="EUR_USD", instrument_definition_id="def-eur-v1",
+            timeframe="M15", run_type="APOLLO",
             strategy_title="Mean Reversion", version_label="v7",
         )
         repo.create(run)
         fetched = repo.get(run.id)
         assert fetched["instrument"] == "EUR_USD"
+        assert fetched["instrument_definition_id"] == "def-eur-v1"
         assert fetched["timeframe"] == "M15"
         assert fetched["result_kind"] == "APOLLO_PROOF"
         assert fetched["display_title"] == "<EUR_USD · M15> Mean Reversion v7 — APOLLO"

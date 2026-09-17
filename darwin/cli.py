@@ -84,6 +84,7 @@ def cmd_dataset_load(args: argparse.Namespace) -> int:
                 MarketDatasetRecord(
                     id=dataset.dataset_id,
                     instrument=dataset.instrument,
+                    instrument_definition_id=dataset.instrument_definition_id,
                     timeframe=dataset.timeframe.value,
                     requested_start_utc=dataset.requested_start_utc,
                     requested_end_utc=dataset.requested_end_utc,

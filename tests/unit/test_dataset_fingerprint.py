@@ -8,13 +8,14 @@ from darwin.hermes.dataset import build_market_dataset
 from tests.fixtures.hermes_rows import UTC_2026_09_16_15, hourly_series
 
 
-def _dataset(rows=None):
+def _dataset(rows=None, instrument_definition_id="def-v1"):
     rows = rows if rows is not None else hourly_series(UTC_2026_09_16_15, 5)
     start = rows[0].open_time
     end = rows[-1].open_time + timedelta(hours=1)
     return build_market_dataset(
         dataset_id="ds-1",
         instrument="XAU_USD",
+        instrument_definition_id=instrument_definition_id,
         timeframe=Timeframe.H1,
         requested_start_utc=start,
         requested_end_utc=end,
@@ -47,6 +48,7 @@ def test_fingerprint_independent_of_load_timestamp():
     ds2 = build_market_dataset(
         dataset_id="different-id",
         instrument="XAU_USD",
+        instrument_definition_id="def-v1",
         timeframe=Timeframe.H1,
         requested_start_utc=rows[0].open_time,
         requested_end_utc=rows[-1].open_time + timedelta(hours=1),
@@ -82,6 +84,7 @@ def test_gap_detection_finds_missing_hour():
     ds = build_market_dataset(
         dataset_id="ds-gap",
         instrument="XAU_USD",
+        instrument_definition_id="def-v1",
         timeframe=Timeframe.H1,
         requested_start_utc=start,
         requested_end_utc=end,
@@ -106,6 +109,7 @@ def test_empty_dataset_has_stable_fingerprint_and_no_crash():
     ds = build_market_dataset(
         dataset_id="ds-empty",
         instrument="XAU_USD",
+        instrument_definition_id="def-v1",
         timeframe=Timeframe.H1,
         requested_start_utc=UTC_2026_09_16_15,
         requested_end_utc=UTC_2026_09_16_15 + timedelta(hours=1),
@@ -137,6 +141,7 @@ def test_gap_detection_anchors_to_actual_data_phase_not_requested_start():
     ds = build_market_dataset(
         dataset_id="ds-phase",
         instrument="XAU_USD",
+        instrument_definition_id="def-v1",
         timeframe=TF.H4,
         requested_start_utc=phase_start.replace(hour=0),
         requested_end_utc=phase_start + timedelta(seconds=step * 3),
@@ -146,3 +151,19 @@ def test_gap_detection_anchors_to_actual_data_phase_not_requested_start():
     )
     assert ds.gap_summary.missing_count == 0
     assert ds.gap_summary.actual_count == 3
+
+
+
+def test_fingerprint_changes_when_instrument_definition_id_changes():
+    """Amendment A-002 item 3: identical prices/timestamps, different
+    instrument-definition identity -> different fingerprint. A later
+    semantic redefinition must never silently make old research mean
+    something different.
+    """
+    rows = hourly_series(UTC_2026_09_16_15, 3)
+    ds_v1 = _dataset(list(rows), instrument_definition_id="def-v1")
+    ds_v2 = _dataset(list(rows), instrument_definition_id="def-v2")
+    assert ds_v1.fingerprint_sha256 != ds_v2.fingerprint_sha256
+    # sanity: identical definition id still reproduces the same fingerprint
+    ds_v1_again = _dataset(list(rows), instrument_definition_id="def-v1")
+    assert ds_v1.fingerprint_sha256 == ds_v1_again.fingerprint_sha256

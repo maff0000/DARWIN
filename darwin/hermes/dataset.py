@@ -22,6 +22,12 @@ from darwin.hermes.validation import RawCanonicalRow
 # HERMES canonical price columns are DECIMAL(12,5) — five decimal places.
 # Scaling by 10**5 gives an exact integer representation with no binary
 # floating-point rounding of a canonical market fact.
+#
+# Amendment A-002 (PID-001 §1b): PRICE_SCALE is a lossless numerical
+# ENCODING property only. It is NOT tick size, pip size, contract size,
+# minimum price increment, or position multiplier — those concepts belong
+# to a future, separately governed APOLLO execution contract and must
+# never be conflated with this constant or derived from it.
 PRICE_SCALE = 100_000
 
 TIMEFRAME_STEP_SECONDS: dict[Timeframe, int] = {
@@ -76,10 +82,17 @@ class GapSummary:
 class MarketDataset:
     """Immutable in-memory market-data boundary. ATHENA/APOLLO consume this and
     must never know or depend on HERMES's physical storage layout.
+
+    `instrument_definition_id` (Amendment A-002, PID-001 §1b/§16) binds the
+    InstrumentDefinition identity under which `open`/`high`/`low`/`close`
+    are semantically interpreted — not merely the bare `instrument` string.
+    It is included in the fingerprint (see `compute_fingerprint`) so a later
+    semantic redefinition can never silently change what old research meant.
     """
 
     dataset_id: str
     instrument: str
+    instrument_definition_id: str
     timeframe: Timeframe
     requested_start_utc: datetime
     requested_end_utc: datetime
@@ -135,6 +148,7 @@ class MarketDataset:
         return {
             "dataset_id": self.dataset_id,
             "instrument": self.instrument,
+            "instrument_definition_id": self.instrument_definition_id,
             "timeframe": self.timeframe.value,
             "requested_start_utc": self.requested_start_utc.isoformat(),
             "requested_end_utc": self.requested_end_utc.isoformat(),
@@ -157,6 +171,7 @@ class MarketDataset:
 def compute_fingerprint(
     *,
     instrument: str,
+    instrument_definition_id: str,
     timeframe: Timeframe,
     open_time_epoch_s: np.ndarray,
     open_fp: np.ndarray,
@@ -171,12 +186,20 @@ def compute_fingerprint(
     surrogate IDs, derivation_run_id, and machine/host — two independent loads
     of unchanged HERMES rows for the same range must produce the same value.
 
-    Serialisation: `instrument` UTF-8, NUL, `timeframe` UTF-8, NUL, then for
-    each row in ascending open_time order: open_time_epoch_s (int64 big-endian),
-    open/high/low/close (int64 big-endian fixed-point), volume (int64 big-endian).
+    Includes `instrument_definition_id` (Amendment A-002) so that identical
+    price content under a different instrument-definition identity never
+    produces the same fingerprint — a later semantic redefinition changes the
+    dataset's identity, not just its metadata.
+
+    Serialisation: `instrument` UTF-8, NUL, `instrument_definition_id` UTF-8,
+    NUL, `timeframe` UTF-8, NUL, then for each row in ascending open_time
+    order: open_time_epoch_s (int64 big-endian), open/high/low/close (int64
+    big-endian fixed-point), volume (int64 big-endian).
     """
     hasher = hashlib.sha256()
     hasher.update(instrument.encode("utf-8"))
+    hasher.update(b"\x00")
+    hasher.update(instrument_definition_id.encode("utf-8"))
     hasher.update(b"\x00")
     hasher.update(timeframe.value.encode("utf-8"))
     hasher.update(b"\x00")
@@ -254,6 +277,7 @@ def build_market_dataset(
     *,
     dataset_id: str,
     instrument: str,
+    instrument_definition_id: str,
     timeframe: Timeframe,
     requested_start_utc: datetime,
     requested_end_utc: datetime,
@@ -271,6 +295,7 @@ def build_market_dataset(
         empty = np.array([], dtype=np.int64)
         fingerprint = compute_fingerprint(
             instrument=instrument,
+            instrument_definition_id=instrument_definition_id,
             timeframe=timeframe,
             open_time_epoch_s=empty,
             open_fp=empty,
@@ -288,6 +313,7 @@ def build_market_dataset(
         return MarketDataset(
             dataset_id=dataset_id,
             instrument=instrument,
+            instrument_definition_id=instrument_definition_id,
             timeframe=timeframe,
             requested_start_utc=requested_start_utc,
             requested_end_utc=requested_end_utc,
@@ -328,6 +354,7 @@ def build_market_dataset(
 
     fingerprint = compute_fingerprint(
         instrument=instrument,
+        instrument_definition_id=instrument_definition_id,
         timeframe=timeframe,
         open_time_epoch_s=open_time_epoch_s,
         open_fp=open_fp,
@@ -346,6 +373,7 @@ def build_market_dataset(
     return MarketDataset(
         dataset_id=dataset_id,
         instrument=instrument,
+        instrument_definition_id=instrument_definition_id,
         timeframe=timeframe,
         requested_start_utc=requested_start_utc,
         requested_end_utc=requested_end_utc,

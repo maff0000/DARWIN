@@ -43,10 +43,16 @@ class StrategyVersion:
 
 @dataclass(frozen=True)
 class MarketDatasetRecord:
-    """Persisted MarketDataset metadata/fingerprint — never candle rows themselves."""
+    """Persisted MarketDataset metadata/fingerprint — never candle rows themselves.
+
+    `instrument_definition_id` (Amendment A-002) is the InstrumentDefinition
+    identity under which this dataset's prices are interpreted -- see
+    darwin.hermes.instrument_definition.
+    """
 
     id: str
     instrument: str
+    instrument_definition_id: str
     timeframe: str
     requested_start_utc: datetime
     requested_end_utc: datetime
@@ -71,6 +77,11 @@ class ResearchRun:
     market_datasets -- see darwin.research_store.run_binding.create_research_run,
     which is the only supported way to construct one (it enforces the
     instrument/timeframe agreement with the bound dataset).
+
+    `instrument_definition_id` (Amendment A-002, PID-001 §1b) is inherited
+    from the bound MarketDataset -- historical evidence must always be able
+    to answer what an instrument's price meant when the run was executed,
+    even if InstrumentDefinition is redefined later.
     """
 
     id: str
@@ -79,6 +90,7 @@ class ResearchRun:
     build_version: str
     status: str
     instrument: str
+    instrument_definition_id: str
     timeframe: str
     display_title: str
     candidate_id: str | None = None

@@ -47,6 +47,7 @@ def create_research_run(
     build_version: str,
     status: str,
     instrument: str,
+    instrument_definition_id: str,
     timeframe: Timeframe | str,
     run_type: str,
     strategy_title: str | None = None,
@@ -56,18 +57,24 @@ def create_research_run(
     dataset_id: str | None = None,
     dataset_instrument: str | None = None,
     dataset_timeframe: Timeframe | str | None = None,
+    dataset_instrument_definition_id: str | None = None,
     configuration_fingerprint: str | None = None,
 ) -> ResearchRun:
     """Construct a `ResearchRun`, rejecting an instrument or timeframe
-    mismatch against its bound `MarketDataset` (§1a) rather than silently
-    storing it.
+    mismatch against its bound `MarketDataset` (§1a), and an
+    instrument-definition mismatch (Amendment A-002, §1b), rather than
+    silently storing them.
 
-    `dataset_instrument`/`dataset_timeframe` are the bound dataset's own
-    values (from a `MarketDataset` or persisted `MarketDatasetRecord`) —
-    pass them whenever `dataset_id` is supplied so the mismatch can
-    actually be checked; a `dataset_id` given without them is not itself
-    validated here (the caller vouches for it), but callers with the
-    dataset in hand should always pass its instrument/timeframe.
+    `instrument_definition_id` is mandatory and explicit -- never inferred
+    from `instrument` -- mirroring `MarketDataset.instrument_definition_id`
+    (darwin.hermes.instrument_definition). `dataset_instrument`/
+    `dataset_timeframe`/`dataset_instrument_definition_id` are the bound
+    dataset's own values (from a `MarketDataset` or persisted
+    `MarketDatasetRecord`) — pass them whenever `dataset_id` is supplied so
+    the mismatch can actually be checked; a `dataset_id` given without them
+    is not itself validated here (the caller vouches for it), but callers
+    with the dataset in hand should always pass its instrument/timeframe/
+    instrument_definition_id.
     """
     instrument_tf = _timeframe_value(timeframe)
 
@@ -84,6 +91,15 @@ def create_research_run(
                     f"Run timeframe {instrument_tf!r} does not match bound MarketDataset "
                     f"timeframe {dataset_tf!r} (dataset_id={dataset_id})"
                 )
+        if (
+            dataset_instrument_definition_id is not None
+            and instrument_definition_id != dataset_instrument_definition_id
+        ):
+            raise RunBindingError(
+                f"Run instrument_definition_id {instrument_definition_id!r} does not match "
+                f"bound MarketDataset instrument_definition_id "
+                f"{dataset_instrument_definition_id!r} (dataset_id={dataset_id})"
+            )
 
     display_title = build_run_title(
         instrument=instrument,
@@ -100,6 +116,7 @@ def create_research_run(
         build_version=build_version,
         status=status,
         instrument=instrument,
+        instrument_definition_id=instrument_definition_id,
         timeframe=instrument_tf,
         display_title=display_title,
         candidate_id=candidate_id,

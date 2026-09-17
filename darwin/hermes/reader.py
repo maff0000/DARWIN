@@ -17,6 +17,7 @@ from darwin.core.config import HermesConfig
 from darwin.core.errors import HermesUnavailableError, InvalidRequestError
 from darwin.core.logging import log_event
 from darwin.hermes.contract import ALLOWED_INSTRUMENTS, Timeframe, canonical_object_for
+from darwin.hermes.instrument_definition import get_instrument_definition
 from darwin.hermes.validation import RawCanonicalRow, validate_rows
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,21 @@ def check_hermes_reachable(config: HermesConfig) -> bool:
         conn.close()
 
 
+def normalize_utc_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    """The single place request-boundary UTC normalisation happens (Amendment
+    A-002, PID-001 §1b items 6-8). Rejects naive datetimes at the public
+    HERMES-read boundary; normalises any timezone-aware instant to UTC, so
+    equivalent instants expressed in different UTC offsets always normalise
+    identically -- never silently assume UTC for a value that wasn't
+    explicitly timezone-aware.
+    """
+    if start.tzinfo is None or end.tzinfo is None:
+        raise InvalidRequestError("start/end must be timezone-aware UTC datetimes")
+    if start >= end:
+        raise InvalidRequestError("start must be strictly before end (end exclusive)")
+    return start.astimezone(UTC), end.astimezone(UTC)
+
+
 def fetch_canonical_rows(
     config: HermesConfig,
     *,
@@ -82,13 +98,12 @@ def fetch_canonical_rows(
     """
     if instrument not in ALLOWED_INSTRUMENTS:
         raise InvalidRequestError(f"Instrument {instrument!r} is not in the DARWIN allowlist")
-    if start.tzinfo is None or end.tzinfo is None:
-        raise InvalidRequestError("start/end must be timezone-aware UTC datetimes")
-    if start >= end:
-        raise InvalidRequestError("start must be strictly before end (end exclusive)")
 
-    start_utc = start.astimezone(UTC)
-    end_utc = end.astimezone(UTC)
+    # Amendment A-002: naive-rejection + UTC normalisation happen BEFORE any
+    # connection attempt -- proven in tests/unit/test_utc_semantics.py by
+    # pointing at an unreachable host and confirming InvalidRequestError,
+    # never HermesUnavailableError, is what's raised.
+    start_utc, end_utc = normalize_utc_range(start, end)
 
     table = canonical_object_for(timeframe)  # closed mapping only, see contract.py
     query = _SELECT_TEMPLATE.format(table=table)
@@ -179,15 +194,22 @@ def load_market_dataset(
     from darwin.core.identities import new_id
     from darwin.hermes.dataset import build_market_dataset
 
+    # Amendment A-002: resolve the governed InstrumentDefinition BEFORE the
+    # HERMES query — an instrument with no governed semantics must never
+    # reach a dataset build, even if HERMES itself would answer for it.
+    instrument_definition = get_instrument_definition(instrument)
+
+    requested_start_utc, requested_end_utc = normalize_utc_range(start, end)
     rows = fetch_canonical_rows(
         config, instrument=instrument, timeframe=timeframe, start=start, end=end
     )
     return build_market_dataset(
         dataset_id=new_id(),
         instrument=instrument,
+        instrument_definition_id=instrument_definition.fingerprint,
         timeframe=timeframe,
-        requested_start_utc=start.astimezone(UTC),
-        requested_end_utc=end.astimezone(UTC),
+        requested_start_utc=requested_start_utc,
+        requested_end_utc=requested_end_utc,
         rows=rows,
         adapter_build_version=adapter_build_version,
         loaded_at_utc=datetime.now(UTC),
