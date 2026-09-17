@@ -3,7 +3,7 @@
 **Parent authority:** `PID.md`, closed PID-001 Foundation (`docs/pids/PID-001-FOUNDATION.md`), Amendments A-001/A-002/A-003/A-004R1  
 **Product:** DARWIN  
 **Module/work package:** ARENA (application shell + Foundation read surface)  
-**Status:** DRAFT FOR ARCHITECTURAL REVIEW  
+**Status:** APPROVED FOR IMPLEMENTATION  
 **Version:** 0.1.0  
 **Date:** 2026-09-17  
 **Implementation owner:** FORGE under ROGUE  
