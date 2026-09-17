@@ -6,6 +6,7 @@
 export type NavIconName =
   | "overview"
   | "datasets"
+  | "discovery"
   | "runs"
   | "evidence"
   | "pipeline"
@@ -26,6 +27,10 @@ export interface NavGroup {
 export const NAV: NavGroup[] = [
   { label: "Core", items: [{ label: "Overview", path: "/", icon: "overview" }] },
   { label: "Market Data", items: [{ label: "Datasets", path: "/datasets", icon: "datasets" }] },
+  // SCOUT (PID-003) sits upstream of ATHENA/APOLLO research in the
+  // canonical flow (SCOUT -> Workshop -> Specification -> ATHENA ->
+  // APOLLO) — its own nav group, between Market Data and Research.
+  { label: "Discovery", items: [{ label: "Discovery", path: "/discovery", icon: "discovery" }] },
   {
     label: "Research",
     items: [

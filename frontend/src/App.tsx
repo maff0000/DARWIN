@@ -3,6 +3,8 @@ import { AppShell } from "./components/AppShell";
 import { Overview } from "./pages/Overview";
 import { Datasets } from "./pages/Datasets";
 import { DatasetDetail } from "./pages/DatasetDetail";
+import { Discovery } from "./pages/Discovery";
+import { DiscoveryDetail } from "./pages/DiscoveryDetail";
 import { Runs } from "./pages/Runs";
 import { RunDetail } from "./pages/RunDetail";
 import { Evidence } from "./pages/Evidence";
@@ -20,6 +22,8 @@ export function App() {
           <Route path="/" element={<Overview />} />
           <Route path="/datasets" element={<Datasets />} />
           <Route path="/datasets/:id" element={<DatasetDetail />} />
+          <Route path="/discovery" element={<Discovery />} />
+          <Route path="/discovery/:id" element={<DiscoveryDetail />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/evidence" element={<Evidence />} />

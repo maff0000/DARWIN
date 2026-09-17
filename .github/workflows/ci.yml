@@ -162,9 +162,16 @@ jobs:
             -v ${{ github.workspace }}:/work -w /work \
             python:3.12-slim bash -c "pip install -q -e . && darwin migrate && python frontend/e2e/fixtures/seed.py"
 
-      - name: Start DARWIN_core against the seeded database (HERMES deliberately unreachable — proves degraded-but-ready)
+      - name: Start DARWIN_core against the seeded database (HERMES + Trader.dev deliberately unreachable — proves degraded-but-ready)
+        # --add-host pins mcp-api.trader.dev (darwin/scout/trader_dev_adapter.py
+        # ALLOWED_API_HOST) to an address nothing listens on inside this
+        # container, so PID-003 SCOUT's "Trader.dev unreachable" state is
+        # exercised deterministically in CI — same discipline this step
+        # already uses for HERMES — rather than depending on a real,
+        # non-deterministic external network call.
         run: |
           docker run -d --name darwin_e2e_core --network darwin_e2e_net -p 8000:8000 \
+            --add-host mcp-api.trader.dev:127.0.0.1 \
             -e DARWIN_PG_HOST=darwin_e2e_pg -e DARWIN_PG_PORT=5432 -e DARWIN_PG_DB=darwin -e DARWIN_PG_USER=darwin_app -e DARWIN_PG_PASSWORD=e2e_ci_pw \
             -e DARWIN_HERMES_HOST=unreachable-in-ci -e DARWIN_HERMES_PORT=3307 -e DARWIN_HERMES_DB=tradingSignals -e DARWIN_HERMES_USER=darwin_ro -e DARWIN_HERMES_PASSWORD=unused \
             -e DARWIN_BUILD_VERSION=0.1.0 -e DARWIN_BUILD_COMMIT=${{ github.sha }} -e DARWIN_BUILD_TIME=ci -e DARWIN_ENV=e2e \
@@ -184,7 +191,7 @@ jobs:
         working-directory: frontend
         env:
           DARWIN_E2E_BASE_URL: http://localhost:8000
-        run: npx playwright test e2e/shell.spec.ts e2e/shell-refinement.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts
+        run: npx playwright test e2e/shell.spec.ts e2e/shell-refinement.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts e2e/discovery.spec.ts
 
       - name: Tear down populated stack, stand up a fresh unseeded one for empty-state proof
         run: |
@@ -202,6 +209,7 @@ jobs:
             -v ${{ github.workspace }}:/work -w /work \
             python:3.12-slim bash -c "pip install -q -e . && darwin migrate"
           docker run -d --name darwin_e2e_core_empty --network darwin_e2e_net -p 8001:8000 \
+            --add-host mcp-api.trader.dev:127.0.0.1 \
             -e DARWIN_PG_HOST=darwin_e2e_pg_empty -e DARWIN_PG_PORT=5432 -e DARWIN_PG_DB=darwin -e DARWIN_PG_USER=darwin_app -e DARWIN_PG_PASSWORD=e2e_ci_pw \
             -e DARWIN_HERMES_HOST=unreachable-in-ci -e DARWIN_HERMES_PORT=3307 -e DARWIN_HERMES_DB=tradingSignals -e DARWIN_HERMES_USER=darwin_ro -e DARWIN_HERMES_PASSWORD=unused \
             -e DARWIN_BUILD_VERSION=0.1.0 -e DARWIN_BUILD_COMMIT=${{ github.sha }} -e DARWIN_BUILD_TIME=ci -e DARWIN_ENV=e2e \
