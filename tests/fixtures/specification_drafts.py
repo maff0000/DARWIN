@@ -18,15 +18,26 @@ from darwin.specification.applicability import (
     IntrabarAmbiguityPolicy,
     SessionSpec,
 )
+from darwin.specification.causal import CausalTimingPolicy
 from darwin.specification.composition import (
     AtomicCondition,
     Direction,
     ExpiryMode,
     ExpirySpec,
 )
+from darwin.specification.data_requirements import (
+    DataRequirement,
+    HistoricalDepthRequirement,
+    HistoricalDepthUnit,
+)
 from darwin.specification.domain import SpecificationDraft
 from darwin.specification.expressions import Comparison, ComparisonOperator, Literal
-from darwin.specification.facts import CanonicalFactReference, DataAuthorityClass
+from darwin.specification.facts import (
+    CanonicalFactReference,
+    DataAuthorityClass,
+    FactClass,
+    FactReferenceKind,
+)
 from darwin.specification.provenance import (
     ProvenanceRecord,
     RuleAcceptanceState,
@@ -39,13 +50,55 @@ XAU_USD_APPLICABILITY = InstrumentApplicability(
 )
 
 
-def h1_close_reference(timeframe: str = "H1") -> CanonicalFactReference:
+def hermes_ohlcv_requirement_id(timeframe: str = "H1", instrument_id: str = "XAU_USD") -> str:
+    """The one deterministic requirement_id every HERMES OHLCV
+    `CanonicalFactReference` at this (instrument, timeframe) pair binds to
+    (PID-004A hardening item 2: every canonical fact a strategy consumes
+    must be deterministically backed by a declared DataRequirement --
+    never left implicit)."""
+    return f"hermes_{instrument_id.lower()}_{timeframe.lower()}_ohlcv"
+
+
+def hermes_ohlcv_requirement(timeframe: str = "H1", instrument_id: str = "XAU_USD") -> DataRequirement:
+    """The real DataRequirement backing HERMES canonical OHLCV bars at
+    `timeframe` for `instrument_id` -- covers OPEN/HIGH/LOW/CLOSE/VOLUME as
+    one bundle (a HERMES bar arrives as a whole, not per-field), so both
+    `h1_close_reference`/`h1_high_reference` at the same timeframe are
+    backed by this same requirement."""
+    return DataRequirement(
+        requirement_id=hermes_ohlcv_requirement_id(timeframe, instrument_id),
+        display_name=f"{instrument_id} {timeframe} HERMES canonical OHLCV bars",
+        fact_class=FactClass.MARKET_OHLCV,
+        fact_reference_kind=FactReferenceKind.CANONICAL_FACT_REFERENCE,
+        authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
+        instrument_applicability=(instrument_id,),
+        timeframe=Timeframe(timeframe),
+        required_historical_depth=HistoricalDepthRequirement(count=200, unit=HistoricalDepthUnit.BARS),
+        units="USD_PER_TROY_OUNCE",
+        required_fields=("OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"),
+        causal_timing_policy=CausalTimingPolicy.NOT_APPLICABLE,
+    )
+
+
+def _hermes_ohlcv_field_reference(
+    field: str, timeframe: str, instrument_id: str = "XAU_USD"
+) -> CanonicalFactReference:
     return CanonicalFactReference(
-        fact_key="OHLCV.CLOSE",
+        fact_key=f"OHLCV.{field}",
+        fact_class=FactClass.MARKET_OHLCV,
         authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
         unit="USD_PER_TROY_OUNCE",
         timeframe=Timeframe(timeframe),
+        requirement_id=hermes_ohlcv_requirement_id(timeframe, instrument_id),
     )
+
+
+def h1_close_reference(timeframe: str = "H1", *, instrument_id: str = "XAU_USD") -> CanonicalFactReference:
+    return _hermes_ohlcv_field_reference("CLOSE", timeframe, instrument_id)
+
+
+def h1_high_reference(timeframe: str = "H1", *, instrument_id: str = "XAU_USD") -> CanonicalFactReference:
+    return _hermes_ohlcv_field_reference("HIGH", timeframe, instrument_id)
 
 
 def simple_atomic_condition(
@@ -84,8 +137,15 @@ def minimal_valid_draft(
     composition: AtomicCondition | None = None,
 ) -> SpecificationDraft:
     """The smallest SpecificationDraft that passes `validate_draft` cleanly:
-    one atomic OHLCV condition, no parameters/policies/data requirements
-    referenced, explicit NOT_APPLICABLE intrabar/expiry, no session."""
+    one atomic OHLCV condition, no other parameters/policies referenced,
+    explicit NOT_APPLICABLE intrabar/expiry, no session. Its required
+    HERMES market input (H1 `OHLCV.CLOSE`) is bound to a real, explicitly
+    declared `DataRequirement` (PID-004A hardening item 2 -- this fixture
+    used to consume canonical `OHLCV.CLOSE` while declaring zero
+    DataRequirement at all, which is exactly the gap that hardening pass
+    closed). Every `composition` override actually passed by this test
+    suite's callers uses the same default H1 timeframe, so attaching this
+    one requirement unconditionally is sufficient and never spurious."""
     condition = composition or simple_atomic_condition()
     draft = SpecificationDraft(
         draft_id=draft_id,
@@ -98,6 +158,7 @@ def minimal_valid_draft(
         intrabar_ambiguity_policy=IntrabarAmbiguityPolicy.NOT_APPLICABLE,
         setup_expiry=ExpirySpec(mode=ExpiryMode.NOT_APPLICABLE),
     )
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     for leaf_condition_id in _leaf_ids(condition):
         draft.set_provenance(accepted_provenance(leaf_condition_id))
     return draft

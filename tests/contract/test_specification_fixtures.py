@@ -84,6 +84,8 @@ from tests.fixtures.specification_drafts import (
     XAU_USD_APPLICABILITY,
     accepted_provenance,
     h1_close_reference,
+    h1_high_reference,
+    hermes_ohlcv_requirement,
     minimal_valid_draft,
     simple_atomic_condition,
 )
@@ -135,10 +137,7 @@ def test_fixture_02_all_composition():
                 timeframe=Timeframe("H1"),
                 expression=Comparison(
                     operator=ComparisonOperator.GT,
-                    left=CanonicalFactReference(
-                        fact_key="OHLCV.HIGH", authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
-                        unit="USD_PER_TROY_OUNCE", timeframe=Timeframe("H1"),
-                    ),
+                    left=h1_high_reference("H1"),
                     right=Literal(Decimal(4010), unit="USD_PER_TROY_OUNCE"),
                 ),
                 direction=Direction.LONG,
@@ -146,6 +145,7 @@ def test_fixture_02_all_composition():
         ),
     )
     draft = _with_provenance(_bare_draft("fixture-02", all_comp))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     result = finalise(draft, strategy_version_id="fixture-02")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     assert result.strategy_version.composition.primitive.value == "ALL"
@@ -164,10 +164,7 @@ def test_fixture_03_any_composition():
                 timeframe=Timeframe("H1"),
                 expression=Comparison(
                     operator=ComparisonOperator.GT,
-                    left=CanonicalFactReference(
-                        fact_key="OHLCV.HIGH", authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
-                        unit="USD_PER_TROY_OUNCE", timeframe=Timeframe("H1"),
-                    ),
+                    left=h1_high_reference("H1"),
                     right=Literal(Decimal(4050), unit="USD_PER_TROY_OUNCE"),
                 ),
                 direction=Direction.LONG,
@@ -175,6 +172,7 @@ def test_fixture_03_any_composition():
         ),
     )
     draft = _with_provenance(_bare_draft("fixture-03", any_comp))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     result = finalise(draft, strategy_version_id="fixture-03")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     assert result.strategy_version.composition.primitive.value == "ANY"
@@ -204,6 +202,7 @@ def test_fixture_04_sequence_composition_distinct_from_all():
         tie_semantics=SequenceTieSemantics.TIES_PERMITTED,
     )
     draft = _with_provenance(_bare_draft("fixture-04", sequence))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     result = finalise(draft, strategy_version_id="fixture-04")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     version = result.strategy_version
@@ -237,6 +236,8 @@ def test_fixture_05_context_trigger_composition():
         context_validity=ExpirySpec(mode=ExpiryMode.DURATION, duration_seconds=4 * 3600),
     )
     draft = _with_provenance(_bare_draft("fixture-05", ct))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H4"))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="M5"))
     result = finalise(draft, strategy_version_id="fixture-05")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     version = result.strategy_version
@@ -275,6 +276,8 @@ def test_fixture_06_multi_timeframe_context_trigger_causal_alignment():
         context_validity=ExpirySpec(mode=ExpiryMode.FRAMES, frame_count=48, finest_bound_timeframe=Timeframe("M5")),
     )
     draft = _with_provenance(_bare_draft("fixture-06", ct))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="M5"))
     result = finalise(draft, strategy_version_id="fixture-06")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     version = result.strategy_version
@@ -300,6 +303,8 @@ def test_fixture_06_frames_expiry_naming_the_wrong_finest_timeframe_is_refused()
         context_validity=ExpirySpec(mode=ExpiryMode.FRAMES, frame_count=48, finest_bound_timeframe=Timeframe("H1")),
     )
     draft = _with_provenance(_bare_draft("fixture-06b", ct))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="M5"))
     outcome = validate_draft(draft)
     assert outcome.status == ValidationOutcomeStatus.STRATEGY_NOT_SUFFICIENTLY_DEFINED
     assert any(f.code == "FRAMES_EXPIRY_TIMEFRAME_MISMATCH" for f in outcome.findings)
@@ -322,6 +327,7 @@ def test_fixture_07_session_timezone_dst_strategy():
         direction=Direction.LONG,
     )
     draft = _with_provenance(_bare_draft("fixture-07", condition))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="M15"))
     draft.session_spec = SessionSpec(
         iana_timezone="America/New_York", local_start="08:00", local_end="17:00",
         weekdays=(0, 1, 2, 3, 4), dst_handling=DstHandling.FOLLOW_IANA_TIMEZONE_RULES,
@@ -344,15 +350,13 @@ def test_fixture_08_wick_touch_strategy_distinguishes_high_from_close():
         timeframe=Timeframe("H1"),
         expression=Comparison(
             operator=ComparisonOperator.CROSSES_ABOVE,
-            left=CanonicalFactReference(
-                fact_key="OHLCV.HIGH", authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
-                unit="USD_PER_TROY_OUNCE", timeframe=Timeframe("H1"),
-            ),
+            left=h1_high_reference("H1"),
             right=Literal(Decimal(4050), unit="USD_PER_TROY_OUNCE"),
         ),
         direction=Direction.SHORT,
     )
     draft = _with_provenance(_bare_draft("fixture-08", wick_touch))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     draft.intrabar_ambiguity_policy = IntrabarAmbiguityPolicy.CONSERVATIVE_SL_FIRST
     result = finalise(draft, strategy_version_id="fixture-08")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
@@ -370,6 +374,7 @@ def test_fixture_09_fixed_and_tunable_parameter_strategy():
         direction=Direction.LONG,
     )
     draft = _with_provenance(_bare_draft("fixture-09", condition))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     draft.set_parameter(
         ParameterDefinition(
             parameter_id="breakout_threshold", status=ParameterStatus.TUNABLE, value_type=ParameterValueType.DECIMAL,
@@ -440,13 +445,28 @@ def test_fixture_11_iv_wall_data_blocked():
         units="CONTRACTS", required_fields=("strike", "expiry", "open_interest"),
         causal_timing_policy=CausalTimingPolicy.NOT_APPLICABLE,
     )
+    # PID-004A hardening item 5: EventPredicate is reserved for governed
+    # event/context fact classes (NEWS_CONTEXT/ECONOMIC_SURPRISE/
+    # PREDICTION_MARKET -- see darwin.specification.data_requirements.
+    # CAUSALLY_SENSITIVE_FACT_CLASSES). An implied-volatility "wall" is
+    # continuously-observed market-derived data, not a discrete external
+    # event, so it is modelled here as a genuine CanonicalFactReference
+    # value compared against a level -- never smuggled through
+    # EventPredicate merely because both concepts involve "context".
+    iv_wall_fact = CanonicalFactReference(
+        fact_key="OPTIONS.IMPLIED_VOLATILITY", fact_class=FactClass.IMPLIED_VOLATILITY,
+        authority_class=DataAuthorityClass.OPTIONS_AUTHORITY, unit="IV_PERCENT", timeframe=Timeframe("D1"),
+        requirement_id="xau_iv_surface",
+    )
     wall_exit = AtomicCondition(
         condition_id="iv_wall_context", semantic_role="CONTEXT", timeframe=Timeframe("D1"),
-        expression=EventPredicate(fact_requirement_id="xau_iv_surface"), direction=Direction.BOTH,
+        expression=Comparison(operator=ComparisonOperator.GT, left=iv_wall_fact, right=Literal(Decimal(0), unit="IV_PERCENT")),
+        direction=Direction.BOTH,
     )
     trigger = simple_atomic_condition("price_approaches_iv_wall", threshold="4000")
     draft = _with_provenance(_bare_draft("fixture-11", trigger))
     draft.exit_rules = (wall_exit,)
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     draft.set_data_requirement(iv_requirement)
     draft.set_data_requirement(oi_requirement)
     draft.set_provenance(accepted_provenance("iv_wall_context"))
@@ -459,6 +479,7 @@ def test_fixture_11_iv_wall_data_blocked():
         assessment_id="fixture-11-readiness", strategy_version_id=version.strategy_version_id,
         mandatory_requirement_ids={r.requirement_id for r in version.data_requirements},
         per_requirement={
+            "hermes_xau_usd_h1_ohlcv": (PerRequirementAvailability.AVAILABLE, None),
             "xau_iv_surface": (PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED, "options authority not yet onboarded"),
             "xau_open_interest": (PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED, "options authority not yet onboarded"),
         },
@@ -509,6 +530,7 @@ def test_fixture_13_causal_external_context_strategy():
     trigger = simple_atomic_condition("gold_reaction_trigger", threshold="4000")
     draft = _with_provenance(_bare_draft("fixture-13", trigger))
     draft.exit_rules = (context,)
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     draft.set_data_requirement(cpi_requirement)
     draft.set_provenance(accepted_provenance("cpi_beat_context"))
 
@@ -553,6 +575,7 @@ def test_fixture_14_deterministic_derived_fact_strategy():
         direction=Direction.LONG,
     )
     draft = _with_provenance(_bare_draft("fixture-14", condition))
+    draft.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     result = finalise(draft, strategy_version_id="fixture-14")
     assert result.outcome.status == ValidationOutcomeStatus.VALID
     version_v1 = result.strategy_version
@@ -569,6 +592,7 @@ def test_fixture_14_deterministic_derived_fact_strategy():
         direction=Direction.LONG,
     )
     draft_v2 = _with_provenance(_bare_draft("fixture-14-v2", condition_v2))
+    draft_v2.set_data_requirement(hermes_ohlcv_requirement(timeframe="H1"))
     version_v2 = finalise(draft_v2, strategy_version_id="fixture-14-v2").strategy_version
 
     assert version_v1.semantic_fingerprint != version_v2.semantic_fingerprint

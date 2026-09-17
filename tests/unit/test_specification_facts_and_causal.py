@@ -20,6 +20,7 @@ from darwin.specification.errors import (
 from darwin.specification.facts import (
     CanonicalFactReference,
     DataAuthorityClass,
+    FactClass,
     FactReferenceKind,
     MissingInputBehavior,
     SpecificationDerivedFact,
@@ -34,9 +35,11 @@ from darwin.specification.timeframe import Timeframe
 def _canonical_close(timeframe: str = "H1") -> CanonicalFactReference:
     return CanonicalFactReference(
         fact_key="OHLCV.CLOSE",
+        fact_class=FactClass.MARKET_OHLCV,
         authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
         unit="USD_PER_TROY_OUNCE",
         timeframe=Timeframe(timeframe),
+        requirement_id=f"hermes_xau_usd_{timeframe.lower()}_ohlcv",
     )
 
 
@@ -83,9 +86,11 @@ def test_canonical_fact_reference_kind_is_fixed():
     with pytest.raises(FactReferenceKindError):
         CanonicalFactReference(
             fact_key="OHLCV.CLOSE",
+            fact_class=FactClass.MARKET_OHLCV,
             authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
             unit="USD_PER_TROY_OUNCE",
             timeframe=Timeframe("H1"),
+            requirement_id="hermes_xau_usd_h1_ohlcv",
             kind=FactReferenceKind.SPECIFICATION_DERIVED_FACT,
         )
 
