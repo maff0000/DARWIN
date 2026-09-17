@@ -1,7 +1,7 @@
 # DARWIN — Project Memory / Architectural Index
 
 **Status:** Active project authority index  
-**Last updated:** 2026-09-17 (Amendment A-001: multi-instrument product-boundary clarification)
+**Last updated:** 2026-09-17 (Amendment A-002: time/instrument unit semantics; supersedes-additive to Amendment A-001)
 
 This file records durable DARWIN architectural facts that future delivery sessions must load before changing product architecture. It is not a secret store and must never contain credentials or platform-admin secret locations.
 
@@ -138,6 +138,24 @@ At minimum it preserves:
 - load metadata sufficient to reproduce the research input.
 
 ATHENA and APOLLO consume `MarketDataset`; they must not know or depend upon HERMES's physical database layout.
+
+---
+
+## 5a. Instrument definition / unit semantics (Amendment A-002, 2026-09-17)
+
+A numeric OHLC price has no meaning without instrument semantics. DARWIN's `InstrumentDefinition` (instrument-generic, never inferred by parsing the ticker) supplies: base/quote asset, base quantity unit, price unit, and a definition version/fingerprint. `MarketDataset` binds this identity (not just the bare `instrument` string), and the dataset fingerprint includes it, so a later semantic redefinition cannot silently change what old research meant. `ResearchRun` inherits the same instrument-definition identity as its bound dataset.
+
+**XAUUSD unit invariant:** for `XAU_USD`, canonical market price is USD per troy ounce of gold. This is market-data interpretation only — it does NOT define broker lot size or contract multiplier. Later APOLLO monetary P&L must combine price movement × explicit traded quantity in governed quantity units × explicit execution/contract semantics where required. Never derive monetary P&L from price change alone without unit-aware quantity semantics.
+
+`PRICE_SCALE` (the fixed-point encoding factor, §5) is a lossless numerical encoding property only — never tick size, pip size, contract size, minimum price increment, or position multiplier. Those belong to a future, separately governed APOLLO execution contract (venue/execution instrument, quantity unit, contract multiplier, lot size, minimum trade quantity, tick value, spread, commission, margin, etc.), explicitly reserved and not implemented in PID-001.
+
+Distinction to preserve everywhere:
+
+```text
+Market identity + Market units + UTC time semantics  ≠  Broker/execution contract
+```
+
+DARWIN Foundation owns the left side only.
 
 ---
 

@@ -17,6 +17,36 @@ canonical market fact (including wick `high`/`low`) cannot be silently
 altered by floating-point rounding. Timestamps are stored as `int64` UTC
 epoch seconds. Volume is `int64`.
 
+**`PRICE_SCALE` is a lossless numerical encoding property only** (Amendment
+A-002). It is NOT tick size, pip size, contract size, minimum price
+increment, or position multiplier — those belong to a future, separately
+governed APOLLO execution contract and are not implemented here. Never
+conflate storage precision with market economics.
+
+## Instrument semantics (Amendment A-002)
+
+A numeric OHLC price has no meaning without instrument semantics —
+`XAU_USD = 4300.00000` means `4300 USD per troy ounce of gold`, not merely
+`4300`. `MarketDataset` binds an `InstrumentDefinition` identity
+(instrument-generic: base/quote asset, base quantity unit, price unit,
+definition version/fingerprint) under which its prices are interpreted, not
+merely the bare `instrument` string. The dataset fingerprint includes this
+identity, so a later semantic redefinition cannot silently change what old
+research meant. `ResearchRun` inherits the same identity as its bound
+dataset. For `XAU_USD` specifically, canonical market price is USD per troy
+ounce of gold (`MEMORY.md` §5a) — market-data interpretation only, not a
+broker lot size or contract multiplier.
+
+```text
+Market identity + Market units + UTC time semantics  ≠  Broker/execution contract
+```
+
+DARWIN Foundation owns the left side. Future APOLLO owns the explicit
+execution economics required to turn market movement into monetary trade
+results — DARWIN must never assume a broker-lot convention (e.g.
+"1 lot XAUUSD = 100 ounces") unless a future, explicit, separately governed
+execution contract says so.
+
 Recovering the exact original decimal is `value / 100000` — implemented as
 `from_fixed_point()` for anywhere a human-readable/decimal view is needed;
 the canonical hot-path representation stays integer throughout.

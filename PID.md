@@ -8,9 +8,10 @@
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
 **Status:** APPROVED / AUTHORITATIVE  
-**Version:** 0.2.0  
+**Version:** 0.3.0  
 **Date:** 2026-09-17  
 **Amendment A-001 (2026-09-17):** multi-instrument product-boundary clarification, incorporated into §1.
+**Amendment A-002 (2026-09-17):** time/instrument unit semantics — see §7a.
 
 ---
 
@@ -470,6 +471,30 @@ A dataset is invalid if canonical row invariants are violated, including malform
 Gaps must be represented honestly. DARWIN must not fabricate missing candles.
 
 The loader may detect/report expected-grid gaps, but Foundation must not invent a universal policy that all strategies require gap-free data; later experiments/specifications decide whether a particular gap pattern invalidates a test.
+
+---
+
+## 7a. Amendment A-002 — time/instrument unit semantics (2026-09-17)
+
+A numeric OHLC price without instrument semantics is insufficient: `XAU_USD = 4300.00000` must be interpretable as `4300 USD per troy ounce of gold`, not merely `4300`. Foundation therefore owns enough instrument semantics to make market data unambiguous — nothing more:
+
+```text
+Market identity + Market units + UTC time semantics  ≠  Broker/execution contract
+```
+
+DARWIN owns the left side. Future APOLLO owns the explicit execution economics (contract multiplier, lot size, minimum trade quantity, tick value, commission, margin, etc.) required to turn market movement into monetary trade results. DARWIN must never assume a broker-lot convention (e.g. "1 lot XAUUSD = 100 ounces") unless a future, explicit, separately governed execution contract says so.
+
+A minimal, instrument-generic `InstrumentDefinition` concept (instrument_id, base_asset, quote_asset, base_quantity_unit, price_unit, definition_version/fingerprint) supplies this semantic layer. The ticker (`InstrumentId`) is identity; the `InstrumentDefinition` supplies meaning. It is never inferred dynamically by parsing the ticker string.
+
+`MarketDataset` binds, directly or by immutable reference/fingerprint, the `InstrumentDefinition` under which its prices are interpreted — not merely the bare instrument identifier — and the dataset fingerprint binds that identity too, so a later semantic change cannot silently make old research mean something different. `ResearchRun` inherits the same instrument-definition identity used by its bound `MarketDataset`, so historical evidence can always answer both "what instrument was this?" and "what did one unit of that instrument mean when this test was run?"
+
+UTC remains canonical throughout (§3.3): HERMES `open_time` is UTC by contract, all persisted research timestamps and `MarketDataset` timestamps are UTC, requested dataset boundaries are timezone-aware and normalised to UTC, dataset fingerprints are timezone-stable, and no host-local timezone may affect computation. A future strategy session may describe an explicit IANA timezone/DST rule (e.g. a London or New York session) — that resolves to the canonical UTC timeline before ATHENA/APOLLO evaluation, and belongs to SPECIFICATION, not Foundation.
+
+Storage precision must never be confused with market economics: `PRICE_SCALE` (§7) is a lossless numerical encoding property only — it is not tick size, pip size, contract size, minimum price increment, or position multiplier.
+
+DARWIN remains multi-instrument (§1, Amendment A-001); `InstrumentDefinition` is never an XAU-specific object — contract fixtures prove at least two coexisting definitions (e.g. XAU_USD: XAU/USD/TROY_OUNCE/USD_PER_TROY_OUNCE, and EUR_USD: EUR/USD/EURO/USD_PER_EUR) without pretending EUR_USD is currently available from the real canonical HERMES surface.
+
+**Architect ruling on the A-001 second-real-instrument proof item:** the absence of a second real HERMES instrument is **not a PID-001 merge blocker**. Foundation's multi-instrument structure is proven with controlled contract fixtures; the first programme milestone remains XAUUSD; modifying HERMES purely to satisfy a Foundation test would violate the system boundary. That A-001 acceptance item is reclassified `DEFERRED_EXTERNAL_PROOF` — before DARWIN claims real multi-instrument *operational* capability, HERMES must onboard at least one additional canonical instrument and DARWIN must prove a real load against it, as a later cross-system acceptance gate, not Foundation scope.
 
 ---
 
