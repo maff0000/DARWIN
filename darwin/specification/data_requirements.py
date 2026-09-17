@@ -13,7 +13,7 @@ from enum import StrEnum
 
 from darwin.specification.causal import CausalTimingPolicy
 from darwin.specification.errors import SpecificationError
-from darwin.specification.facts import DataAuthorityClass, FactReferenceKind
+from darwin.specification.facts import DataAuthorityClass, FactClass, FactReferenceKind
 from darwin.specification.timeframe import Timeframe
 
 # Re-exported for convenience -- DataRequirement callers commonly need both
@@ -28,24 +28,12 @@ __all__ = [
 ]
 
 
-class FactClass(StrEnum):
-    """PID-004 sec24. Closed, governed extension model -- representative
-    classes needed by this contract phase's fixtures, not a universal
-    ontology (PID-004 sec24: "Governed schema evolution is required for
-    additions.")."""
-
-    MARKET_OHLCV = "MARKET_OHLCV"
-    OPTIONS_CHAIN = "OPTIONS_CHAIN"
-    IMPLIED_VOLATILITY = "IMPLIED_VOLATILITY"
-    OPEN_INTEREST = "OPEN_INTEREST"
-    FUTURES_CURVE = "FUTURES_CURVE"
-    ORDER_BOOK = "ORDER_BOOK"
-    ECONOMIC_SURPRISE = "ECONOMIC_SURPRISE"
-    NEWS_CONTEXT = "NEWS_CONTEXT"
-    PREDICTION_MARKET = "PREDICTION_MARKET"
-    FUNDING_RATE = "FUNDING_RATE"
-    ON_CHAIN = "ON_CHAIN"
-    OTHER_GOVERNED_FACT = "OTHER_GOVERNED_FACT"
+# FactClass itself lives on darwin.specification.facts (PID-004A hardening
+# item 3: it is part of a fact's own governed semantic identity, needed by
+# CanonicalFactReference's own construction-time validation) and is
+# re-exported here unchanged so existing callers of
+# `from darwin.specification.data_requirements import FactClass` keep
+# working without any change.
 
 
 class HistoricalDepthUnit(StrEnum):

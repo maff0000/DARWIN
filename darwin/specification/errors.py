@@ -97,3 +97,38 @@ class FinalisationError(SpecificationError):
     to the caller, not thrown at them (see module docstring)."""
 
     code = "SPECIFICATION_FINALISATION_ERROR"
+
+
+class InvalidOperandError(SpecificationError):
+    """A `Comparison`/`BooleanExpression`/`AtomicCondition`/
+    `SpecificationDerivedFact` was constructed with an operand/expression/
+    input outside its own closed, governed type vocabulary (PID-004A
+    hardening item 1: the expression tree must be closed -- a raw string,
+    an arbitrary object, or an unsupported dataclass must never survive
+    into a valid StrategyVersion)."""
+
+    code = "SPECIFICATION_INVALID_OPERAND"
+
+
+class UnrecognisedExpressionNodeError(SpecificationError):
+    """A recursive expression-tree walk (see
+    `darwin.specification.validation._iter_expression_nodes`) encountered a
+    node type it does not recognise. Raised explicitly rather than
+    silently treating the node as an inert leaf -- defense-in-depth
+    alongside the construction-time `InvalidOperandError` checks (PID-004A
+    hardening item 1)."""
+
+    code = "SPECIFICATION_UNRECOGNISED_EXPRESSION_NODE"
+
+
+class UngovernedFactKeyError(SpecificationError):
+    """A `CanonicalFactReference` was constructed with a `fact_key` that
+    does not belong to its declared `fact_class`'s governed semantic
+    vocabulary, for a fact_class this contract phase currently governs
+    (e.g. HERMES `MARKET_OHLCV`). A free, merely-non-empty `fact_key`
+    string is never sufficient to confer canonical-fact status within a
+    currently-governed namespace (PID-004A hardening item 3). Fact classes
+    belonging to a not-yet-onboarded authority remain free-text -- this
+    error is never raised for those."""
+
+    code = "SPECIFICATION_UNGOVERNED_FACT_KEY"

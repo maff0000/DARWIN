@@ -22,21 +22,31 @@ temporal semantics.
 Deliberate scope decision (flagged for the Architect, not silently
 resolved): composition COMPONENTS in this contract phase are always
 `AtomicCondition` leaves. Nesting one composition inside another
-("chain-of-chains") is not supported here, matching real current HELIOS,
-which structurally refuses chain-of-chain composition today (HELIOS
-archaeology finding #11, `docs/COMPOSITION.md` sec1.1: "Recursive
-chain-of-chain composition requires explicit architecture authority").
-Inventing DARWIN-side nested composition with no HELIOS compilation
-target would be exactly the kind of semantics PID-004 sec5A forbids
-("DARWIN must not weaken or alter the StrategyVersion... [nor] invent
-missing trading semantics" for a target that cannot yet consume it).
+("chain-of-chains") is not implemented here.
+
+Doctrine (PID-004A hardening item 6 -- corrects an earlier, wrong framing
+of this exact decision): DARWIN is canonical. PID-004A does not implement
+nested composition because it is outside the authorised scope. Future
+DARWIN semantic extensions may exceed current HELIOS capability;
+unsupported promotion must fail explicitly until a versioned equivalent
+compiler/HELIOS capability exists. This is a scope boundary DARWIN itself
+drew, not a limitation borrowed from what today's HELIOS happens to be
+able to execute (real current HELIOS also structurally refuses
+chain-of-chain composition today -- HELIOS archaeology finding #11,
+`docs/COMPOSITION.md` sec1.1: "Recursive chain-of-chain composition
+requires explicit architecture authority" -- but that fact is
+corroborating context, never the reason for DARWIN's own decision).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 
-from darwin.specification.errors import InvalidCompositionError, InvalidExpirySpecError
+from darwin.specification.errors import (
+    InvalidCompositionError,
+    InvalidExpirySpecError,
+    InvalidOperandError,
+)
 from darwin.specification.expressions import (
     BooleanExpression,
     Comparison,
@@ -123,6 +133,17 @@ class AtomicCondition:
             raise InvalidCompositionError(
                 f"AtomicCondition {self.condition_id!r} requires a non-empty semantic_role "
                 f"(PID-004 sec6: no ambient/implicit timeframe role)"
+            )
+        if not isinstance(
+            self.expression,
+            (Comparison, BooleanExpression, TemporalPredicate, SessionPredicate, EventPredicate, UndefinedMeasurementBasis),
+        ):
+            raise InvalidOperandError(
+                f"AtomicCondition {self.condition_id!r}.expression must be a governed Expression "
+                f"node (Comparison/BooleanExpression/TemporalPredicate/SessionPredicate/"
+                f"EventPredicate/UndefinedMeasurementBasis), got {self.expression!r} "
+                f"(type {type(self.expression)!r}) -- PID-004A hardening item 1: the expression "
+                f"tree is closed"
             )
         if self.primitive != CompositionPrimitive.ATOMIC:
             raise InvalidCompositionError("AtomicCondition.primitive is fixed to ATOMIC")

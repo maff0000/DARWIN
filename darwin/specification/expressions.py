@@ -20,7 +20,11 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Union
 
-from darwin.specification.errors import SpecificationError, UnknownOperatorError
+from darwin.specification.errors import (
+    InvalidOperandError,
+    SpecificationError,
+    UnknownOperatorError,
+)
 
 
 class ExpressionKind(StrEnum):
@@ -169,23 +173,58 @@ class UndefinedMeasurementBasis:
 # Forward reference union -- FactReference lives in darwin.specification.facts
 # and is imported lazily by type checkers only, to avoid a circular import
 # (facts.py never needs expressions.py's concrete Comparison/Boolean nodes).
+#
+# This is the closed VALUE-operand union -- what a `Comparison.left`/
+# `.right` may be. It deliberately excludes `Comparison`/`BooleanExpression`
+# themselves (PID-004A hardening item 1: comparisons compare values, not
+# truth values -- a nested Comparison/BooleanExpression is never a valid
+# Comparison operand; combine truth values with `BooleanExpression`
+# instead). `_governed_comparison_operand_types()` below is the real,
+# runtime-enforced source of truth this type alias mirrors for readers/
+# type-checkers only.
 Operand = Union[
     Literal,
     ParameterReference,
     UndefinedMeasurementBasis,
     "darwin.specification.facts.CanonicalFactReference",  # noqa: F821
     "darwin.specification.facts.SpecificationDerivedFact",  # noqa: F821
-    "Comparison",
-    "BooleanExpression",
 ]
+
+
+def _governed_comparison_operand_types() -> tuple[type, ...]:
+    """The closed set of types a `Comparison` operand may be (PID-004A
+    hardening item 1). Resolved lazily, inside a function rather than at
+    module import time, because `CanonicalFactReference`/
+    `SpecificationDerivedFact` live in `darwin.specification.facts`, which
+    itself imports THIS module (`ExpressionKind`) -- a module-level import
+    here would be circular. By the time any `Comparison` is actually
+    constructed, both modules have finished importing, so the deferred
+    import below is safe."""
+    from darwin.specification.facts import (
+        CanonicalFactReference,
+        SpecificationDerivedFact,
+    )
+
+    return (
+        Literal,
+        ParameterReference,
+        UndefinedMeasurementBasis,
+        CanonicalFactReference,
+        SpecificationDerivedFact,
+    )
 
 
 @dataclass(frozen=True)
 class Comparison:
-    """A single typed comparison, e.g. `close GT ema_50`. `left`/`right` may
-    be any Operand -- including a nested Comparison/BooleanExpression is
+    """A single typed comparison, e.g. `close GT ema_50`. `left`/`right`
+    must each be a governed VALUE operand -- `Literal`, `ParameterReference`,
+    `UndefinedMeasurementBasis`, `CanonicalFactReference`, or
+    `SpecificationDerivedFact`. A nested Comparison/BooleanExpression is
     intentionally NOT allowed (comparisons compare values, not truth
-    values; combine truth values with `BooleanExpression` instead)."""
+    values; combine truth values with `BooleanExpression` instead), and
+    neither is a raw string, an arbitrary object, or any other unsupported
+    type (PID-004A hardening item 1: the expression tree is closed and
+    this is enforced at runtime, not merely by a type hint)."""
 
     operator: ComparisonOperator
     left: object
@@ -197,6 +236,14 @@ class Comparison:
             raise UnknownOperatorError(
                 f"Comparison.operator must be a ComparisonOperator, got {self.operator!r}"
             )
+        governed_types = _governed_comparison_operand_types()
+        for side, operand in (("left", self.left), ("right", self.right)):
+            if not isinstance(operand, governed_types):
+                raise InvalidOperandError(
+                    f"Comparison.{side} must be a governed value operand "
+                    f"(Literal/ParameterReference/UndefinedMeasurementBasis/CanonicalFactReference/"
+                    f"SpecificationDerivedFact), got {operand!r} (type {type(operand)!r})"
+                )
         left_unit = getattr(self.left, "unit", None)
         right_unit = getattr(self.right, "unit", None)
         if left_unit is not None and right_unit is not None and left_unit != right_unit:
@@ -208,9 +255,12 @@ class Comparison:
 @dataclass(frozen=True)
 class BooleanExpression:
     """AND/OR combine two-or-more operands; NOT takes exactly one. Operands
-    are typically Comparison/TemporalPredicate/SessionPredicate/EventPredicate
-    nodes or nested BooleanExpressions -- never a bare Literal (a boolean
-    combination of constants is not a strategy condition)."""
+    must be governed CONDITION-typed nodes -- `Comparison`,
+    `BooleanExpression` (nested), `TemporalPredicate`, `SessionPredicate`,
+    `EventPredicate`, or `UndefinedMeasurementBasis` -- never a bare
+    `Literal` (a boolean combination of constants is not a strategy
+    condition), a raw string, or any other unsupported type (PID-004A
+    hardening item 1: enforced at runtime, not merely by a type hint)."""
 
     operator: BooleanOperator
     operands: tuple[object, ...]
@@ -221,6 +271,22 @@ class BooleanExpression:
             raise UnknownOperatorError(
                 f"BooleanExpression.operator must be a BooleanOperator, got {self.operator!r}"
             )
+        governed_types = (
+            Comparison,
+            BooleanExpression,
+            TemporalPredicate,
+            SessionPredicate,
+            EventPredicate,
+            UndefinedMeasurementBasis,
+        )
+        for index, operand in enumerate(self.operands):
+            if not isinstance(operand, governed_types):
+                raise InvalidOperandError(
+                    f"BooleanExpression operand[{index}] must be a governed condition node "
+                    f"(Comparison/BooleanExpression/TemporalPredicate/SessionPredicate/"
+                    f"EventPredicate/UndefinedMeasurementBasis), got {operand!r} "
+                    f"(type {type(operand)!r})"
+                )
         if self.operator == BooleanOperator.NOT:
             if len(self.operands) != 1:
                 raise SpecificationError("NOT requires exactly one operand")

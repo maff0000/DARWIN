@@ -22,9 +22,70 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from darwin.specification.errors import FactReferenceKindError, SpecificationError
+from darwin.specification.errors import (
+    FactReferenceKindError,
+    SpecificationError,
+    UngovernedFactKeyError,
+)
 from darwin.specification.expressions import ExpressionKind
 from darwin.specification.timeframe import Timeframe
+
+
+class FactClass(StrEnum):
+    """PID-004 sec24. Closed, governed extension model -- representative
+    classes needed by this contract phase's fixtures, not a universal
+    ontology (PID-004 sec24: "Governed schema evolution is required for
+    additions."). Lives here, rather than on
+    `darwin.specification.data_requirements`, because it is fundamentally
+    part of a fact's own governed semantic identity (PID-004A hardening
+    item 3) -- `data_requirements.py` imports and re-exports it unchanged
+    so existing callers of `from darwin.specification.data_requirements
+    import FactClass` keep working."""
+
+    MARKET_OHLCV = "MARKET_OHLCV"
+    OPTIONS_CHAIN = "OPTIONS_CHAIN"
+    IMPLIED_VOLATILITY = "IMPLIED_VOLATILITY"
+    OPEN_INTEREST = "OPEN_INTEREST"
+    FUTURES_CURVE = "FUTURES_CURVE"
+    ORDER_BOOK = "ORDER_BOOK"
+    ECONOMIC_SURPRISE = "ECONOMIC_SURPRISE"
+    NEWS_CONTEXT = "NEWS_CONTEXT"
+    PREDICTION_MARKET = "PREDICTION_MARKET"
+    FUNDING_RATE = "FUNDING_RATE"
+    ON_CHAIN = "ON_CHAIN"
+    OTHER_GOVERNED_FACT = "OTHER_GOVERNED_FACT"
+
+
+class HermesMarketField(StrEnum):
+    """PID-004A hardening item 3: the closed, currently-governed semantic
+    field vocabulary for HERMES canonical OHLCV market data. A
+    `CanonicalFactReference` whose `fact_class` is `FactClass.MARKET_OHLCV`
+    must spell its `fact_key` as ``OHLCV.<FIELD>`` with FIELD drawn from
+    this enum -- an unknown/misspelled field (e.g. ``OHLCV.BOGUS``) fails
+    construction rather than silently becoming a valid canonical
+    reference merely because the string happened to be non-empty. This is
+    deliberately NOT a universal fact-key enum for every fact class DARWIN
+    might ever encounter -- fact classes belonging to a not-yet-onboarded
+    authority remain free-text (see `CanonicalFactReference.__post_init__`
+    below)."""
+
+    OPEN = "OPEN"
+    HIGH = "HIGH"
+    LOW = "LOW"
+    CLOSE = "CLOSE"
+    VOLUME = "VOLUME"
+
+
+def fact_key_semantic_field(fact_key: str) -> str:
+    """The semantic field/leaf segment of a dotted `fact_key`, e.g.
+    ``"CLOSE"`` from ``"OHLCV.CLOSE"`` or ``"CPI_YOY"`` from
+    ``"ARES.ECONOMIC_RELEASE.CPI_YOY"``. Used by
+    `darwin.specification.validation` to cross-check a `CanonicalFactReference`
+    against its bound `DataRequirement.required_fields` (PID-004A
+    hardening item 2) -- deliberately case-preserving; callers compare
+    case-insensitively since `required_fields` vocabularies predate this
+    hardening pass and are not uniformly cased."""
+    return fact_key.rsplit(".", 1)[-1]
 
 
 class DataAuthorityClass(StrEnum):
@@ -64,22 +125,67 @@ class CanonicalFactReference:
     actually exercises lives in `darwin.specification.data_requirements`'s
     fixtures, not as a hardcoded enum here (PID-004 sec9: "PID-004A does
     not need every indicator ever invented... a governed extension
-    model.")."""
+    model.").
+
+    `fact_class` (PID-004A hardening item 3) names the governed namespace
+    this reference belongs to. For `FactClass.MARKET_OHLCV` specifically
+    -- the one fact class this contract phase's real HERMES authority
+    already covers -- `fact_key` is additionally checked against the
+    closed `HermesMarketField` vocabulary at construction time; an
+    unknown/misspelled field fails construction rather than silently
+    becoming valid canonical-fact status merely because the string was
+    non-empty. Every other fact class remains free-text at this layer --
+    DARWIN must still be able to specify a future `DATA_BLOCKED` strategy
+    whose eventual data authority is not yet onboarded; that gets reported
+    later by readiness (`AUTHORITY_NOT_ONBOARDED`/`CONTRACT_INCOMPATIBLE`),
+    never rejected here at validation time.
+
+    `requirement_id` (PID-004A hardening item 2) names the
+    `darwin.specification.data_requirements.DataRequirement` this
+    reference is drawn from -- every canonical fact a strategy consumes
+    must be deterministically backed by a declared DataRequirement, never
+    left implicit. `darwin.specification.validation` cross-checks the
+    named requirement's own fields (fact_class/authority_class/timeframe/
+    units/required_fields/instrument_applicability) against this
+    reference's own fields; a dangling or inconsistent `requirement_id` is
+    a validation-time finding (`STRATEGY_NOT_SUFFICIENTLY_DEFINED`), not a
+    construction-time error, because a SpecificationDraft may legitimately
+    be mid-authoring when a reference like this is added and the matching
+    requirement not yet declared.
+    """
 
     fact_key: str
+    fact_class: FactClass
     authority_class: DataAuthorityClass
     unit: str
     timeframe: Timeframe
+    requirement_id: str
     kind: FactReferenceKind = FactReferenceKind.CANONICAL_FACT_REFERENCE
 
     def __post_init__(self) -> None:
         if not self.fact_key or not self.fact_key.strip():
             raise SpecificationError("CanonicalFactReference requires a non-empty fact_key")
+        if not self.requirement_id or not self.requirement_id.strip():
+            raise SpecificationError(
+                "CanonicalFactReference requires a non-empty requirement_id -- every canonical "
+                "fact reference must name the DataRequirement it is drawn from (PID-004A "
+                "hardening item 2)"
+            )
         if self.kind != FactReferenceKind.CANONICAL_FACT_REFERENCE:
             raise FactReferenceKindError(
                 "CanonicalFactReference.kind is fixed; it may never be constructed as anything "
                 "other than CANONICAL_FACT_REFERENCE"
             )
+        if self.fact_class == FactClass.MARKET_OHLCV:
+            namespace, _, field = self.fact_key.partition(".")
+            if namespace != "OHLCV" or field not in {member.value for member in HermesMarketField}:
+                raise UngovernedFactKeyError(
+                    f"CanonicalFactReference fact_key {self.fact_key!r} is not a governed HERMES "
+                    f"market field; expected 'OHLCV.<FIELD>' with FIELD in "
+                    f"{sorted(member.value for member in HermesMarketField)} (PID-004A hardening "
+                    f"item 3: a free non-empty string is never sufficient for a currently-governed "
+                    f"namespace)"
+                )
 
 
 @dataclass(frozen=True)
@@ -115,6 +221,14 @@ class SpecificationDerivedFact:
             raise SpecificationError(
                 f"SpecificationDerivedFact {self.derived_fact_id!r} must declare at least one input fact"
             )
+        for input_fact in self.input_facts:
+            if not isinstance(input_fact, (CanonicalFactReference, SpecificationDerivedFact)):
+                raise SpecificationError(
+                    f"SpecificationDerivedFact {self.derived_fact_id!r} input_facts entry "
+                    f"{input_fact!r} (type {type(input_fact)!r}) is not a governed "
+                    f"CanonicalFactReference or SpecificationDerivedFact (PID-004A hardening "
+                    f"item 1: the expression/fact tree is closed)"
+                )
         if not self.algorithm_id or not self.algorithm_version:
             raise SpecificationError(
                 f"SpecificationDerivedFact {self.derived_fact_id!r} requires algorithm_id and algorithm_version"
