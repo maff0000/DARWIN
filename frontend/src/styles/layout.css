@@ -433,6 +433,28 @@
   color: var(--ink-dim);
 }
 
+/* ---------- loading ---------- */
+.loading-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+.loading-state__pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--signal);
+  flex-shrink: 0;
+  animation: loading-pulse 1.1s ease-in-out infinite;
+}
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 /* ---------- empty / error ---------- */
 .empty-state,
 .error-state {

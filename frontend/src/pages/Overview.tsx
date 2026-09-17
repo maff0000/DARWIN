@@ -5,6 +5,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { ErrorState } from "../components/ErrorState";
 import { EmptyState } from "../components/EmptyState";
 import { IdValue } from "../components/IdValue";
+import { LoadingState } from "../components/LoadingState";
 
 export function Overview() {
   const summary = useApi(api.systemSummary, []);
@@ -12,7 +13,11 @@ export function Overview() {
   const runs = useApi(() => api.listRuns(5), []);
 
   if (summary.status === "loading") {
-    return <p className="page">Loading system summary…</p>;
+    return (
+      <div className="page">
+        <LoadingState label="Loading system summary…" />
+      </div>
+    );
   }
   if (summary.status === "error") {
     return (

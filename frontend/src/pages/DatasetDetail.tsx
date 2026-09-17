@@ -4,6 +4,7 @@ import { useApi } from "../api/useApi";
 import { api } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { IdValue } from "../components/IdValue";
+import { LoadingState } from "../components/LoadingState";
 
 /** Renders instrument unit semantics ("USD per troy ounce") entirely from
  * the governed InstrumentDefinition API response — never a hardcoded XAU
@@ -20,7 +21,12 @@ export function DatasetDetail() {
   const instrument = dataset.status === "ready" ? dataset.data.instrument : undefined;
   const def = useApi(() => (instrument ? api.getInstrumentDefinition(instrument) : Promise.reject(new Error("no instrument"))), [instrument]);
 
-  if (dataset.status === "loading") return <p className="page">Loading dataset…</p>;
+  if (dataset.status === "loading")
+    return (
+      <div className="page">
+        <LoadingState label="Loading dataset…" />
+      </div>
+    );
   if (dataset.status === "error")
     return (
       <div className="page">
@@ -65,7 +71,11 @@ export function DatasetDetail() {
 
       <section className="panel" style={{ marginBottom: "var(--space-5)" }}>
         <h2 className="panel-heading">Governed instrument definition</h2>
-        {def.status === "loading" && <p style={{ padding: "var(--space-4)" }}>Loading…</p>}
+        {def.status === "loading" && (
+          <div style={{ padding: "var(--space-4)" }}>
+            <LoadingState label="Loading instrument definition…" />
+          </div>
+        )}
         {def.status === "error" && (
           <div style={{ padding: "var(--space-4)" }}>
             <ErrorState error={def.error} dependency="instrument definition" onRetry={def.reload} />

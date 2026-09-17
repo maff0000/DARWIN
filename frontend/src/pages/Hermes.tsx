@@ -4,6 +4,7 @@ import { ErrorState } from "../components/ErrorState";
 import { StatusBadge } from "../components/StatusBadge";
 import { IdValue } from "../components/IdValue";
 import { KvRow } from "../components/KeyValue";
+import { LoadingState } from "../components/LoadingState";
 
 /** DARWIN's adapter/dependency view of HERMES only — never an administration
  * panel, never a mutation surface (PID-002 §12). */
@@ -19,7 +20,12 @@ export function Hermes() {
       </div>
     );
   }
-  if (summary.status !== "ready") return <p className="page">Loading…</p>;
+  if (summary.status !== "ready")
+    return (
+      <div className="page">
+        <LoadingState label="Loading HERMES status…" />
+      </div>
+    );
 
   const hermes = summary.data.readiness.components.find((c) => c.name === "hermes_adapter");
   const sample = datasets.status === "ready" ? datasets.data.items[0] : undefined;

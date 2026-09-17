@@ -6,12 +6,18 @@ import { EvidenceBadge, EvidenceExplain } from "../components/EvidenceBadge";
 import { DikePanel } from "../components/DikePanel";
 import { IdValue } from "../components/IdValue";
 import { KvRow } from "../components/KeyValue";
+import { LoadingState } from "../components/LoadingState";
 
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const run = useApi(() => api.getRun(id!), [id]);
 
-  if (run.status === "loading") return <p className="page">Loading run…</p>;
+  if (run.status === "loading")
+    return (
+      <div className="page">
+        <LoadingState label="Loading run…" />
+      </div>
+    );
   if (run.status === "error")
     return (
       <div className="page">
