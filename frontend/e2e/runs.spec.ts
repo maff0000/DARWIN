@@ -32,7 +32,7 @@ test("run detail renders evidence level and DIKE_DISABLED correctly (items 8, 9)
 
   await expect(page.locator(".evidence-badge").first()).toBeVisible();
   await expect(page.getByText(/historical optimisation\/search result/i)).toBeVisible();
-  await expect(page.getByText("DIKE_DISABLED")).toBeVisible();
+  await expect(page.locator(".dike-state")).toHaveText("DIKE_DISABLED");
   await expect(page.getByText(/unguarded scientific baseline/i)).toBeVisible();
 });
 
@@ -41,7 +41,16 @@ test("run detail renders DIKE_GUARDED policy identity correctly (item 10)", asyn
   const apolloRow = page.locator("tr", { has: page.locator(".evi-apollo") }).first();
   await apolloRow.locator("a").click();
 
-  await expect(page.getByRole("cell", { name: "DIKE_GUARDED" })).toBeVisible();
+  // Wait for the detail view to actually render before checking DIKE state --
+  // this is the first assertion after an async client-side navigation, so it
+  // needs the same warm-up as the sibling DIKE_DISABLED test below (which
+  // gets it for free from its own earlier assertions).
+  await expect(page.locator(".evidence-badge").first()).toBeVisible();
+  // DIKE identity on the detail view is rendered by DikePanel as a plain
+  // div (.dike-state), not a table cell -- the list page's own DIKE column
+  // and filter <option> both also say "DIKE_GUARDED", so scope tightly to
+  // the actual detail-page element rather than bare text.
+  await expect(page.locator(".dike-state")).toHaveText("DIKE_GUARDED");
   // IdValue abbreviates long values for scanning but keeps the full value
   // reachable via the title attribute (PID-002 §4) — assert both.
   await expect(page.locator('[title="e2e-synthetic-conservative-policy"]')).toBeVisible();
