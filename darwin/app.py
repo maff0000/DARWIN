@@ -10,13 +10,19 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from darwin.core.build import build_info
 from darwin.core.config import DarwinConfig
 from darwin.core.errors import DarwinError, NotReadyError, to_error_response
 from darwin.core.health import ComponentHealth, ComponentStatus, ReadinessReport
 from darwin.core.logging import configure_logging
+from darwin.hermes.instrument_definition import (
+    UnknownInstrumentDefinitionError,
+    get_instrument_definition,
+    list_instrument_definitions,
+)
 from darwin.hermes.reader import check_hermes_reachable
 from darwin.research_store.db import check_postgres_reachable, connection
 from darwin.research_store.migrations import migration_state
@@ -31,6 +37,12 @@ from darwin.research_store.repositories import (
 logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "research_store" / "migrations_sql"
+
+# ARENA static production bundle (PID-002 §5) — built at Docker image build
+# time from ./frontend, packaged here. No Node runtime exists in production;
+# this directory either exists (persistent/Docker deployment) or doesn't
+# (plain `uvicorn` dev run against the API only) — both are valid.
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def create_app(config: DarwinConfig | None = None) -> FastAPI:
@@ -121,7 +133,76 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="run not found")
         return item
 
+    @app.get("/api/v1/instrument-definitions")
+    def list_instrument_definitions_endpoint() -> dict:
+        """Read-only governed InstrumentDefinition registry (PID-002 §12) — the
+        existing dataset/run APIs only carry `instrument_definition_id`
+        (a fingerprint); ARENA needs the underlying semantic fields
+        (base/quote asset, unit) to render unit meaning without hardcoding
+        any instrument. No existing endpoint can serve this."""
+        return {"items": [_instrument_definition_dict(d) for d in list_instrument_definitions()]}
+
+    @app.get("/api/v1/instrument-definitions/{instrument_id}")
+    def get_instrument_definition_endpoint(instrument_id: str) -> dict:
+        try:
+            definition = get_instrument_definition(instrument_id)
+        except UnknownInstrumentDefinitionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _instrument_definition_dict(definition)
+
+    @app.get("/api/v1/migrations")
+    def migrations_endpoint() -> dict:
+        """Structured read-only migration state (PID-002 §12) — /ready only
+        exposes a summary OK/DEGRADED status for the "migrations" component,
+        not the applied/pending version lists ARENA's Migrations page needs.
+        No migration-execution path exists here or anywhere in ARENA."""
+        return migration_state(cfg.postgres, MIGRATIONS_DIR)
+
+    _mount_arena(app)
+
     return app
+
+
+def _mount_arena(app: FastAPI) -> None:
+    """Serve the ARENA static bundle from `/` (PID-002 §5 — deliberately `/`,
+    not `/arena`, since ARENA is the whole application shell at this stage;
+    documented in docs/architecture/arena.md). A missing STATIC_DIR (e.g. a
+    bare API-only dev run) is not an error — ARENA simply isn't served, the
+    API still works, and this function does nothing rather than fail loudly
+    for a legitimate non-production run mode.
+    """
+    if not STATIC_DIR.is_dir():
+        return
+
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="arena-assets")
+
+    index_path = STATIC_DIR / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def arena_spa(full_path: str):  # noqa: ARG001 — path captured for routing only
+        # Never intercept the API surface — FastAPI already matches literal
+        # /api/v1/... routes above this catch-all with higher priority, but
+        # this guard makes the boundary explicit rather than relying on
+        # registration order alone.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="not found")
+        if not index_path.is_file():
+            raise HTTPException(status_code=404, detail="ARENA bundle not built")
+        return FileResponse(index_path)
+
+
+def _instrument_definition_dict(d) -> dict:
+    return {
+        "instrument_id": d.instrument_id,
+        "base_asset": d.base_asset,
+        "quote_asset": d.quote_asset,
+        "base_quantity_unit": d.base_quantity_unit,
+        "price_unit": d.price_unit,
+        "definition_version": d.definition_version,
+        "fingerprint": d.fingerprint,
+    }
 
 
 def _ensure_ready_for_data(report: ReadinessReport) -> None:

@@ -13,3 +13,11 @@ dist/
 *_secret*
 .DS_Store
 secrets/
+
+# ARENA (PID-002) — frontend build artifacts, never committed
+darwin/static/
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+frontend/screenshots/

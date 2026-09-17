@@ -1,0 +1,98 @@
+/*
+  DARWIN ARENA design tokens.
+
+  Subject: an instrument-panel for a research programme that proves trading
+  strategies against market history — the audience is the researcher/operator
+  who needs to trust a number before acting on it. The palette borrows from
+  avionics/lab-instrument displays rather than a SaaS dashboard: a near-slate
+  ground (not pure black), one restrained signal-blue for interaction, and a
+  *separate* five-hue evidence scale that is never reused for chrome — so an
+  evidence chip can never be mistaken for a status light or a button.
+
+  Color (named, 6 core + evidence scale):
+    --ground        #0D1117  base canvas
+    --panel         #151B23  raised surface (tables, cards, rail)
+    --panel-raised  #1B2330  hover/active surface
+    --line          #262E3A  hairline borders
+    --ink           #E6EAF2  primary text
+    --ink-dim       #8892A0  secondary/meta text
+    --signal        #4E9BD8  interactive accent (links, focus, primary action)
+
+  Type: one family, system-ui stack (no external font fetch — this is an
+  internal ops tool, reliability over a bespoke typeface), with a monospace
+  stack reserved exclusively for identifiers/hashes/timestamps so scanning a
+  table of SHAs "reads" differently from scanning strategy titles.
+*/
+
+:root {
+  --ground: #0d1117;
+  --ground-raised: #10151c;
+  --panel: #151b23;
+  --panel-raised: #1b2330;
+  --panel-hover: #202938;
+  --line: #262e3a;
+  --line-strong: #333d4d;
+  --ink: #e6eaf2;
+  --ink-dim: #8892a0;
+  --ink-faint: #5c6572;
+  --signal: #4e9bd8;
+  --signal-dim: #2f6690;
+  --signal-ink: #dff0ff;
+
+  --ok: #3fb68b;
+  --ok-bg: #123128;
+  --degraded: #d9a441;
+  --degraded-bg: #332a12;
+  --down: #d9534f;
+  --down-bg: #331616;
+
+  /* Evidence scale — deliberately distinct from status colors above and
+     from --signal, so no evidence chip can be confused with a health light
+     or an interactive control. Ordered by trust: external → optimisation →
+     proof → forward → live. */
+  --evi-source: #9a8fc9;
+  --evi-source-bg: #211d33;
+  --evi-athena: #c99a3a;
+  --evi-athena-bg: #302411;
+  --evi-apollo: #35b07a;
+  --evi-apollo-bg: #10291f;
+  --evi-plutus: #4fb3c9;
+  --evi-plutus-bg: #102a30;
+  --evi-live: #d9714f;
+  --evi-live-bg: #33200f;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    "SFMono-Regular", ui-monospace, "Cascadia Mono", "Roboto Mono", Menlo,
+    Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --nav-w: 232px;
+  --nav-w-collapsed: 56px;
+  --topbar-h: 48px;
+
+  color-scheme: dark;
+}
+
+/* Light mode is not a design goal for v1 (dark-first per PID-002 §4) but the
+   token contract stays theme-capable — an explicit light override could be
+   added later without touching component code. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
