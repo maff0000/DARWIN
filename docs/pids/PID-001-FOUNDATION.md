@@ -4,8 +4,9 @@
 **Product:** DARWIN  
 **Module/work package:** Foundation  
 **Status:** APPROVED FOR IMPLEMENTATION  
-**Version:** 0.1.0  
-**Date:** 2026-09-16  
+**Version:** 0.2.0  
+**Date:** 2026-09-17  
+**Amendment A-001 (2026-09-17):** multi-instrument substrate, additive to this acceptance gate — see §1a.  
 **Implementation owner:** FORGE under ROGUE  
 **Infrastructure owner:** HELM outside FORGE
 
@@ -20,7 +21,7 @@ Foundation must prove:
 - DARWIN is Docker-first;
 - DARWIN has a clean modular application skeleton;
 - DARWIN has durable SQL-backed control/evidence persistence;
-- DARWIN can read canonical HERMES historical XAUUSD candles using its least-privilege read-only principal;
+- DARWIN can read canonical HERMES historical candles for any canonical instrument (proven for XAUUSD and, where feasible, at least one other) using its least-privilege read-only principal;
 - DARWIN can validate/canonicalise a bounded historical range into an immutable in-memory `MarketDataset`;
 - common identity/evidence/lifecycle primitives exist without prematurely modelling the entire future product;
 - health/readiness/logging/configuration/migrations/tests/CI exist;
@@ -28,6 +29,44 @@ Foundation must prove:
 - DARWIN failure cannot modify or impair HERMES/live trading.
 
 Foundation does **not** implement strategy discovery, strategy logic, optimisation or sequential trade proof.
+
+---
+
+## 1a. Amendment A-001 — multi-instrument substrate (2026-09-17)
+
+DARWIN's product capability is multi-instrument (`PID.md` §1). This amendment is additive to PID-001's acceptance gate — it does not authorise ATHENA, APOLLO, strategy execution, multi-asset portfolio simulation, cross-instrument strategies, correlated-pair execution, position sizing, trade logic, or PID-002 ARENA implementation. It establishes only the identities and substrate so those future modules are never locked to XAUUSD.
+
+### Canonical instrument identity
+
+A first-class `InstrumentId` is canonical, sourced from HERMES. There must be no default instrument, no hard-coded XAU path, no XAU-specific table selection, persistence schema, or run identity anywhere in business logic. `instrument` is always supplied explicitly by the research workload, and is always a query parameter — never interpolated into SQL identifiers or SQL text. Timeframe object selection remains allowlisted and internal, unchanged.
+
+### MarketDataset binding
+
+Every `MarketDataset` represents exactly one instrument, one timeframe, one bounded interval, one canonical HERMES dataset identity/fingerprint. `load_market_dataset(instrument, timeframe, start, end)` — `instrument` is mandatory, no implicit/default. Validation must prove every returned candle belongs to the requested instrument and timeframe; mixed-instrument or mismatched rows fail the load. The dataset fingerprint must bind at minimum the canonical instrument id, timeframe, requested interval, canonical candle contents, and relevant HERMES provenance/contract identity — identical prices belonging to different instruments must never produce the same semantic dataset identity.
+
+### Strategy identity vs test identity
+
+The strategy definition itself is not made unnecessarily instrument-specific in Foundation — that belongs to later SPECIFICATION semantics. Foundation instead establishes: `StrategyCandidate` / `StrategyVersion` + `InstrumentId` + `Timeframe` + `MarketDataset` = `ResearchRun`. The `ResearchRun` is the concrete test instance, so the same `StrategyVersion` can later be tested independently against `XAU_USD`, `EUR_USD`, `GBP_USD`, etc. without cloning the strategy merely to change the instrument.
+
+### ResearchRun must explicitly identify what was tested
+
+See §20's amended `ResearchRun` fields and §22's amended `research_runs` schema. A run's `instrument` and `timeframe` must agree with its bound `MarketDataset` — a mismatched combination (e.g. `run.instrument = EUR_USD` against `dataset.instrument = XAU_USD`, or a timeframe mismatch) must be rejected at creation, not silently stored.
+
+### Run title / human visibility
+
+Every research run must make immediately obvious to a human: which strategy, which version, which instrument/ticker, which timeframe, and what type of run. Example convention (exact punctuation is not architectural, the semantic content is): `<XAU_USD · H1> London Breakout v3 — ATHENA`. A persisted immutable `display_title`/`run_title` is preferred so a later candidate rename does not rewrite historical research presentation. The title is not identity — UUID/version/dataset identity remains authoritative.
+
+### Dataset selection rule
+
+The workflow is structurally: research request → `StrategyVersion` + `InstrumentId` + `Timeframe` + bounded interval → HERMES adapter selects that exact instrument → `MarketDataset(instrument=...)` → `ResearchRun` binds strategy + dataset + instrument → later ATHENA/APOLLO consume that immutable dataset. ATHENA/APOLLO must never independently decide which ticker to load after a run has been defined — the run definition controls the dataset.
+
+### Required regression proof (before PID-001 may be called GREEN)
+
+- **A. Two instruments** — using contract fixtures, load equivalent bounded datasets for at least two different canonical-format instruments. Prove: correct instrument preserved; datasets remain separate; fingerprints differ because instrument identity is included; no row contamination between instruments.
+- **B. Explicit selection** — prove requesting instrument A cannot return instrument B without validation failure.
+- **C. ResearchRun binding** — prove run creation refuses an instrument mismatch with its `MarketDataset`, and refuses a timeframe mismatch, with its `MarketDataset`.
+- **D. Visible identity** — prove run/API representation contains strategy title/version where applicable, instrument, timeframe, result kind.
+- **E. Real HERMES proof** — using `darwin_ro`, perform a bounded dataset load for XAU_USD and at least one non-XAU instrument already present in the canonical HERMES surface. Do not modify HERMES to manufacture this proof. Return instrument, timeframe, row count and fingerprint only; no strategy logic required. **Known blocker as of 2026-09-17, verified directly against HERMES (all six canonical per-timeframe tables plus the unified `canonical_candles` view queried via `darwin_ro`): the canonical HERMES historical surface currently contains exactly one instrument, `XAU_USD`. There is no second canonical instrument to load. This item cannot be satisfied until HERMES's own governed historical surface onboards a second instrument — raised to the DARWIN Architect for a ruling (defer this specific sub-item, or another resolution) rather than resolved unilaterally by Rogue or Forge.**
 
 ---
 
@@ -45,7 +84,7 @@ and prove through automated + runtime evidence that:
 1. both containers start from declared Docker/Compose configuration;
 2. `DARWIN_core` becomes healthy/read-ready only when its own mandatory dependencies are ready;
 3. PostgreSQL migrations initialise the DARWIN schema cleanly;
-4. a bounded XAU_USD HERMES range can be loaded through `darwin_ro` into an immutable `MarketDataset`;
+4. a bounded HERMES range for an explicitly supplied canonical instrument can be loaded through `darwin_ro` into an immutable `MarketDataset` — proven for XAUUSD and, per §1a, for instrument genericity itself;
 5. exact OHLCV, timestamps and required HERMES provenance are preserved;
 6. wick highs/lows survive the complete adapter/dataset path unchanged;
 7. malformed/non-canonical input is rejected;
@@ -660,11 +699,16 @@ Foundation fields may include:
 - result kind/evidence level;
 - candidate/version references if present;
 - dataset reference if present;
+- **instrument** (Amendment A-001 — explicit durable fact, not only reachable via a join to `market_datasets`; must agree with the bound dataset's instrument);
+- **timeframe** (Amendment A-001 — same rule, must agree with the bound dataset's timeframe);
+- **display_title/run_title** (Amendment A-001 — immutable human-readable label identifying strategy + version + instrument + timeframe + run type, e.g. `<XAU_USD · H1> London Breakout v3 — ATHENA`; not identity, see §1a);
 - engine/module;
 - build version;
 - configuration fingerprint;
 - status;
 - timestamps.
+
+A `ResearchRun` whose `instrument` or `timeframe` disagrees with its bound `MarketDataset`'s `instrument`/`timeframe` must be rejected at creation (Amendment A-001, §1a).
 
 Do not add ATHENA/APOLLO-specific result schemas yet.
 
@@ -767,6 +811,8 @@ Fields:
 
 Generic run identity/status/reproducibility metadata.
 
+Amendment A-001: `instrument` and `timeframe` are explicit durable columns on this table (not only available via a join to `market_datasets`), plus an immutable `display_title`/`run_title` column. A row's `instrument`/`timeframe` must agree with its referenced `market_datasets` row's `instrument`/`timeframe` — enforced at write time, not left as an integrity assumption. Index at minimum considering `(instrument, timeframe)` for later operational reads. This remains metadata only; do not duplicate candle history here.
+
 ### `evidence_records`
 
 Small generic evidence index/reference table if needed for later extension.
@@ -820,6 +866,8 @@ Optional Foundation-only test/admin endpoint for loading a dataset should not au
 - counts of persisted source/candidate/version/dataset/run records.
 
 `pipeline/summary` should expose counts by `PipelineStage` even if initially zero.
+
+Amendment A-001: `/runs` and `/runs/{id}` must be capable of exposing at minimum run id, run/display title, candidate/strategy title where available, strategy version where available, instrument, timeframe, result kind, status, dataset id/fingerprint reference, and timestamps — so PID-002 ARENA can display runs without reverse-engineering their meaning, and can eventually filter research by instrument, timeframe, strategy/candidate, result kind, and status. Do not build the ARENA GUI now; make the Foundation model safe for it.
 
 ---
 
@@ -1008,6 +1056,8 @@ Use:
 - a small deterministic period;
 - at least H1;
 - and at least one governed derived timeframe (H4 or D1).
+
+Amendment A-001: additionally perform the same bounded load for at least one non-XAU instrument already present in the canonical HERMES surface, returning instrument/timeframe/row count/fingerprint only (no strategy logic) — see §1a's required regression proof item E for the current known blocker (as of 2026-09-17, HERMES's canonical surface contains only XAU_USD; this sub-item is deferred to the Architect's ruling, not resolved unilaterally).
 
 Prove:
 
@@ -1233,7 +1283,8 @@ ROGUE must return:
 - failure-isolation proof;
 - known limitations;
 - working-tree status;
-- independent audit result if required by ROGUE/FORGE governance.
+- independent audit result if required by ROGUE/FORGE governance;
+- Amendment A-001 multi-instrument regression proof (§1a items A–D at minimum; item E as far as the current HERMES surface allows, with the instrument-availability blocker stated explicitly rather than silently skipped).
 
 "Implemented" or "looks good" is not acceptance evidence.
 

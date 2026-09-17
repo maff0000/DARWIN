@@ -8,14 +8,17 @@
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
 **Status:** APPROVED / AUTHORITATIVE  
-**Version:** 0.1.0  
-**Date:** 2026-09-16
+**Version:** 0.2.0  
+**Date:** 2026-09-17  
+**Amendment A-001 (2026-09-17):** multi-instrument product-boundary clarification, incorporated into §1.
 
 ---
 
 ## 1. Product outcome
 
-DARWIN is a continuously operating research appliance that discovers, normalises, optimises, independently proves and qualifies XAUUSD trading strategies.
+DARWIN is a continuously operating, multi-instrument research appliance that discovers, normalises, optimises, independently proves and qualifies trading strategies for any canonical instrument made available through the governed HERMES historical contract.
+
+DARWIN's product capability is multi-instrument. Its first programme milestone (§2) is intentionally XAUUSD-focused — XAUUSD is the first proving market, not a boundary on what DARWIN itself can do. DARWIN must never redesign its core data model, research identity, persistence or ARENA surfaces to add a new instrument; it must only need a canonical instrument identifier already present in HERMES's governed historical contract (§6, §7).
 
 Its purpose is to turn an uncontrolled universe of external/internal strategy ideas into a governed pipeline of reproducible candidate evidence.
 

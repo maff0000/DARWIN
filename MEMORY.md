@@ -1,7 +1,7 @@
 # DARWIN — Project Memory / Architectural Index
 
 **Status:** Active project authority index  
-**Last updated:** 2026-09-16
+**Last updated:** 2026-09-17 (Amendment A-001: multi-instrument product-boundary clarification)
 
 This file records durable DARWIN architectural facts that future delivery sessions must load before changing product architecture. It is not a secret store and must never contain credentials or platform-admin secret locations.
 
@@ -12,7 +12,7 @@ This file records durable DARWIN architectural facts that future delivery sessio
 - Product: `DARWIN`
 - Canonical repository: `github.com/maff0000/DARWIN`
 - Canonical development/runtime root: `/srv/DARWIN` on `dell-debian`
-- DARWIN is a Docker-first, continuously operating XAUUSD strategy-discovery, optimisation, sequential-proof and qualification factory.
+- DARWIN is a Docker-first, continuously operating, **multi-instrument** strategy-discovery, optimisation, sequential-proof and qualification factory. Product capability is instrument-generic; XAUUSD is the first programme milestone and initial proving market, not a product boundary (Amendment A-001, 2026-09-17).
 - DARWIN is a research/incubation side-chain and is not part of the live capital-control path.
 - First major milestone: at least **FIVE** independently promising XAUUSD strategies discovered, normalised, optimised and sequentially proven by DARWIN using canonical HERMES historical authority.
 - External leaderboard/source claims never count as DARWIN proof.
