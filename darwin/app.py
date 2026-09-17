@@ -181,7 +181,7 @@ def _mount_arena(app: FastAPI) -> None:
     index_path = STATIC_DIR / "index.html"
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    def arena_spa(full_path: str):  # noqa: ARG001 — path captured for routing only
+    def arena_spa(full_path: str):
         # Never intercept the API surface — FastAPI already matches literal
         # /api/v1/... routes above this catch-all with higher priority, but
         # this guard makes the boundary explicit rather than relying on
