@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from darwin.specification.readiness import assess_readiness
+from darwin.specification.readiness import PerRequirementAvailability, assess_readiness
 from darwin.specification.validation import finalise
 from tests.fixtures.specification_drafts import (
+    hermes_ohlcv_requirement_id,
     minimal_valid_draft,
     simple_atomic_condition,
 )
@@ -70,22 +71,41 @@ def test_case_b_control_identical_rules_produce_identical_semantic_fingerprint()
 # --- Case C: readiness changes never move semantic_fingerprint ------------------
 
 def test_case_c_readiness_changes_do_not_touch_semantic_fingerprint_or_version():
+    """Strengthened per PID-004A hardening item 9: now that the minimal
+    fixture (fixture #1) carries a REAL mandatory DataRequirement (its
+    HERMES H1 OHLCV bars -- see tests/fixtures/specification_drafts.py
+    `minimal_valid_draft`), this is a genuine end-to-end proof against
+    that real requirement -- DATA_BLOCKED first (the requirement
+    UNAVAILABLE), then TESTABLE (the same requirement AVAILABLE) -- rather
+    than the previous, weaker version of this test, which asserted
+    TESTABLE against zero mandatory requirements and so never actually
+    exercised the DATA_BLOCKED branch of `OverallReadinessState` at all.
+    `semantic_fingerprint` must be identical at both points -- the SAME
+    StrategyVersion, only readiness (a wholly separate object) changed."""
     draft = minimal_valid_draft()
     result = finalise(draft, strategy_version_id="sv-fixed-forever")
     version = result.strategy_version
     assert version is not None
     fingerprint_before = version.semantic_fingerprint
 
+    requirement_id = hermes_ohlcv_requirement_id(timeframe="H1")
+    assert {r.requirement_id for r in version.data_requirements} == {requirement_id}
+
     blocked = assess_readiness(
         assessment_id="a-blocked", strategy_version_id=version.strategy_version_id,
-        mandatory_requirement_ids=set(), per_requirement={}, assessed_at_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        mandatory_requirement_ids={requirement_id},
+        per_requirement={requirement_id: (PerRequirementAvailability.UNAVAILABLE, "HERMES H1 OHLCV not yet backfilled")},
+        assessed_at_utc=datetime(2026, 1, 1, tzinfo=UTC),
     )
     available = assess_readiness(
         assessment_id="a-available", strategy_version_id=version.strategy_version_id,
-        mandatory_requirement_ids=set(), per_requirement={}, assessed_at_utc=datetime(2026, 6, 1, tzinfo=UTC),
+        mandatory_requirement_ids={requirement_id},
+        per_requirement={requirement_id: (PerRequirementAvailability.AVAILABLE, None)},
+        assessed_at_utc=datetime(2026, 6, 1, tzinfo=UTC),
     )
-    assert blocked.overall_state.value == "TESTABLE"  # no mandatory requirements in this minimal fixture
+    assert blocked.overall_state.value == "DATA_BLOCKED"
     assert available.overall_state.value == "TESTABLE"
+    assert blocked.strategy_version_id == available.strategy_version_id == version.strategy_version_id
 
     # The StrategyVersion object is literally unchanged -- there is no
     # setter, no mutation, and no re-fingerprinting call anywhere.

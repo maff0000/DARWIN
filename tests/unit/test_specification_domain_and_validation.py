@@ -253,7 +253,10 @@ def test_finalisation_succeeds_when_semantics_complete_even_if_data_will_be_bloc
     readiness = assess_readiness(
         assessment_id="a1", strategy_version_id=version.strategy_version_id,
         mandatory_requirement_ids={r.requirement_id for r in version.data_requirements},
-        per_requirement={"cpi_yoy": (PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED, "ARES economic-surprise history not onboarded")},
+        per_requirement={
+            "cpi_yoy": (PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED, "ARES economic-surprise history not onboarded"),
+            "hermes_xau_usd_h1_ohlcv": (PerRequirementAvailability.AVAILABLE, None),
+        },
         assessed_at_utc=now_utc(),
     )
     from darwin.specification.readiness import OverallReadinessState
