@@ -184,7 +184,7 @@ jobs:
         working-directory: frontend
         env:
           DARWIN_E2E_BASE_URL: http://localhost:8000
-        run: npx playwright test e2e/shell.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts
+        run: npx playwright test e2e/shell.spec.ts e2e/shell-refinement.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts
 
       - name: Tear down populated stack, stand up a fresh unseeded one for empty-state proof
         run: |
