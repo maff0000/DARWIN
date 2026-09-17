@@ -1,10 +1,16 @@
 import { test, expect } from "@playwright/test";
 
-test("ARENA loads and shows build SHA, health, readiness (items 1,2,3)", async ({ page }) => {
+test("ARENA loads and shows build SHA, health, readiness (items 1,2,3)", async ({ page, request }) => {
+  // Assert against the real value the running stack reports (PID-002 real-
+  // data rule) rather than a hardcoded placeholder SHA, which is stale the
+  // moment the CI env changes the commit it builds from.
+  const buildInfo = await (await request.get("/api/v1/buildinfo")).json();
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   // build/commit shown in the top bar
-  await expect(page.locator(".top-bar__build")).toContainText("arena-e");
+  await expect(page.locator(".top-bar__build")).toContainText(
+    `v${buildInfo.application_version} · ${buildInfo.commit.slice(0, 7)}`,
+  );
   // component health table renders real readiness data
   await expect(page.getByRole("cell", { name: "postgres" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "migrations" })).toBeVisible();

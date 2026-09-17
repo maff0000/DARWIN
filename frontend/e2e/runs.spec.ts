@@ -41,7 +41,7 @@ test("run detail renders DIKE_GUARDED policy identity correctly (item 10)", asyn
   const apolloRow = page.locator("tr", { has: page.locator(".evi-apollo") }).first();
   await apolloRow.locator("a").click();
 
-  await expect(page.getByText("DIKE_GUARDED")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "DIKE_GUARDED" })).toBeVisible();
   // IdValue abbreviates long values for scanning but keeps the full value
   // reachable via the title attribute (PID-002 §4) — assert both.
   await expect(page.locator('[title="e2e-synthetic-conservative-policy"]')).toBeVisible();
