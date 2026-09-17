@@ -250,6 +250,20 @@ External-source metrics are discovery/prioritisation inputs only. They are never
 
 ATHENA optimises. APOLLO independently proves frozen candidates. APOLLO must not quietly resume optimisation during proof.
 
+**ARENA visual durability (PID-002):** these evidence classes must carry stable, unmistakably different visual/semantic treatment in ARENA across every later expansion -- no single generic "performance" badge may make a SOURCE_CLAIM look equivalent to APOLLO_PROOF. A user must be able to answer "where did this number come from?" from the UI alone.
+
+---
+
+## 7a. ARENA doctrine (PID-002, 2026-09-17)
+
+ARENA is DARWIN's first-class, permanent visual operating surface -- not a temporary admin page. Durable architectural commitments, not implementation detail (kept in `docs/pids/PID-002-ARENA.md`):
+
+- Served as a static production bundle packaged into the `DARWIN_core` image and served by the existing FastAPI product -- no Node runtime/container in production, no separate ARENA container without a separately Architect-approved requirement. Runtime remains exactly `DARWIN_core` + `DARWIN_sql`, no Redis.
+- Left-hand rail is the primary navigation; the top bar is global/utility only (health, build, environment, Account affordance) -- this split must survive every later module landing (SCOUT/ATHENA/APOLLO/QUALIFICATION) without a shell redesign.
+- ARENA reads Foundation's existing `/api/v1/...` APIs and real persistence only; the browser never talks to PostgreSQL or HERMES directly. Narrow read-only API additions are permitted when a real requirement can't be served by existing endpoints -- never generic mutation APIs.
+- DIKE state/policy identity is displayed as immutable identity only -- ARENA must never imply Foundation evaluates DIKE (PID-001 §1d).
+- No fabricated/demo data of any kind may appear in the production build. Empty states are designed deliberately, never filled with sample data.
+
 ---
 
 ## 8. Container/runtime doctrine
