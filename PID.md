@@ -8,14 +8,20 @@
 **Implementation:** FORGE, one bounded PID/work package at a time  
 **Infrastructure:** HELM outside FORGE  
 **Status:** APPROVED / AUTHORITATIVE  
-**Version:** 0.1.0  
-**Date:** 2026-09-16
+**Version:** 0.5.0  
+**Date:** 2026-09-17  
+**Amendment A-001 (2026-09-17):** multi-instrument product-boundary clarification, incorporated into §1.
+**Amendment A-002 (2026-09-17):** time/instrument unit semantics — see §7a.
+**Amendment A-003 (previously issued; incorporated into this branch 2026-09-17):** DIKE deterministic capital-protection doctrine — see §5.12/§22b.
+**Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §22a. Central-architecture-owned; DARWIN records compatibility only, no cross-system authority.
 
 ---
 
 ## 1. Product outcome
 
-DARWIN is a continuously operating research appliance that discovers, normalises, optimises, independently proves and qualifies XAUUSD trading strategies.
+DARWIN is a continuously operating, multi-instrument research appliance that discovers, normalises, optimises, independently proves and qualifies trading strategies for any canonical instrument made available through the governed HERMES historical contract.
+
+DARWIN's product capability is multi-instrument. Its first programme milestone (§2) is intentionally XAUUSD-focused — XAUUSD is the first proving market, not a boundary on what DARWIN itself can do. DARWIN must never redesign its core data model, research identity, persistence or ARENA surfaces to add a new instrument; it must only need a canonical instrument identifier already present in HERMES's governed historical contract (§6, §7).
 
 Its purpose is to turn an uncontrolled universe of external/internal strategy ideas into a governed pipeline of reproducible candidate evidence.
 
@@ -196,6 +202,7 @@ DARWIN
 ├── research_store/
 ├── hermes/
 ├── scheduler/
+├── dike/
 └── integrations/
 ```
 
@@ -403,6 +410,12 @@ Owns later controlled promotion/feedback boundaries such as CER, HELIOS and PLUT
 
 These are deliberately deferred until DARWIN has first proven its own research pipeline and reached the initial five-strategy milestone threshold for promotion work.
 
+### 5.12 `dike` (Amendment A-003)
+
+Owns DARWIN's deterministic capital-protection policy research and proof responsibility — never enforcement. DARWIN researches and proves DIKE policy behaviour against historical evidence; TRON is the sole system that enforces a DIKE policy live. NEO may learn from and propose DIKE policy changes, but may never mutate or bypass an enforced policy directly. HELIOS remains DIKE/capital unaware — it evaluates strategy signals deterministically without any capital-protection awareness of its own. ATHENA may only search within an authorised DIKE parameter envelope declared by the candidate specification; APOLLO proves one exact frozen DIKE configuration causally, the same way it proves any other frozen candidate parameter. Qualification and ARENA must distinguish DIKE-guarded evidence from DIKE-disabled evidence explicitly — never blend them. DIKE policy identity is immutable and versioned, the same discipline as `StrategyVersion` (§10).
+
+See §22b for the full doctrine.
+
 ---
 
 ## 6. HERMES historical contract
@@ -467,6 +480,30 @@ A dataset is invalid if canonical row invariants are violated, including malform
 Gaps must be represented honestly. DARWIN must not fabricate missing candles.
 
 The loader may detect/report expected-grid gaps, but Foundation must not invent a universal policy that all strategies require gap-free data; later experiments/specifications decide whether a particular gap pattern invalidates a test.
+
+---
+
+## 7a. Amendment A-002 — time/instrument unit semantics (2026-09-17)
+
+A numeric OHLC price without instrument semantics is insufficient: `XAU_USD = 4300.00000` must be interpretable as `4300 USD per troy ounce of gold`, not merely `4300`. Foundation therefore owns enough instrument semantics to make market data unambiguous — nothing more:
+
+```text
+Market identity + Market units + UTC time semantics  ≠  Broker/execution contract
+```
+
+DARWIN owns the left side. Future APOLLO owns the explicit execution economics (contract multiplier, lot size, minimum trade quantity, tick value, commission, margin, etc.) required to turn market movement into monetary trade results. DARWIN must never assume a broker-lot convention (e.g. "1 lot XAUUSD = 100 ounces") unless a future, explicit, separately governed execution contract says so.
+
+A minimal, instrument-generic `InstrumentDefinition` concept (instrument_id, base_asset, quote_asset, base_quantity_unit, price_unit, definition_version/fingerprint) supplies this semantic layer. The ticker (`InstrumentId`) is identity; the `InstrumentDefinition` supplies meaning. It is never inferred dynamically by parsing the ticker string.
+
+`MarketDataset` binds, directly or by immutable reference/fingerprint, the `InstrumentDefinition` under which its prices are interpreted — not merely the bare instrument identifier — and the dataset fingerprint binds that identity too, so a later semantic change cannot silently make old research mean something different. `ResearchRun` inherits the same instrument-definition identity used by its bound `MarketDataset`, so historical evidence can always answer both "what instrument was this?" and "what did one unit of that instrument mean when this test was run?"
+
+UTC remains canonical throughout (§3.3): HERMES `open_time` is UTC by contract, all persisted research timestamps and `MarketDataset` timestamps are UTC, requested dataset boundaries are timezone-aware and normalised to UTC, dataset fingerprints are timezone-stable, and no host-local timezone may affect computation. A future strategy session may describe an explicit IANA timezone/DST rule (e.g. a London or New York session) — that resolves to the canonical UTC timeline before ATHENA/APOLLO evaluation, and belongs to SPECIFICATION, not Foundation.
+
+Storage precision must never be confused with market economics: `PRICE_SCALE` (§7) is a lossless numerical encoding property only — it is not tick size, pip size, contract size, minimum price increment, or position multiplier.
+
+DARWIN remains multi-instrument (§1, Amendment A-001); `InstrumentDefinition` is never an XAU-specific object — contract fixtures prove at least two coexisting definitions (e.g. XAU_USD: XAU/USD/TROY_OUNCE/USD_PER_TROY_OUNCE, and EUR_USD: EUR/USD/EURO/USD_PER_EUR) without pretending EUR_USD is currently available from the real canonical HERMES surface.
+
+**Architect ruling on the A-001 second-real-instrument proof item:** the absence of a second real HERMES instrument is **not a PID-001 merge blocker**. Foundation's multi-instrument structure is proven with controlled contract fixtures; the first programme milestone remains XAUUSD; modifying HERMES purely to satisfy a Foundation test would violate the system boundary. That A-001 acceptance item is reclassified `DEFERRED_EXTERNAL_PROOF` — before DARWIN claims real multi-instrument *operational* capability, HERMES must onboard at least one additional canonical instrument and DARWIN must prove a real load against it, as a later cross-system acceptance gate, not Foundation scope.
 
 ---
 
@@ -970,6 +1007,85 @@ Future forward/demo/live-adjacent evidence may feed DARWIN research.
 No downstream system may silently rewrite an existing promoted strategy through DARWIN.
 
 New evidence may justify a new candidate version.
+
+---
+
+## 22a. Amendment A-004R1 — federated execution / SOCRATES compatibility (2026-09-17)
+
+**Authority note:** `A-004R1` is approved and locked by THE GOAL central architecture, which remains the cross-system authority. DARWIN is NOT given architectural authority over TRON, NEO, SOCRATES, brokers/execution infrastructure, or federation/fleet management by this section. DARWIN's task is only to remain permanently compatible with the approved future architecture. This section does not author a definitive TRON/NEO/SOCRATES programme blueprint — central architecture issues those authoritative PIDs/blueprints separately when their delivery waves begin. DARWIN records only the interfaces and invariants it must preserve today.
+
+### Canonical programme doctrine (central-architecture-owned, recorded here for DARWIN's compatibility)
+
+```text
+DARWIN proves strategies against instruments.
+HELIOS evaluates them deterministically.
+TRON executes approved configurations.
+Brokers are adapters.
+NEO learns locally and feeds back, not in.
+SOCRATES learns globally.
+DARWIN proves what NEO and SOCRATES think they have learned.
+
+Mechanical going forward. Intelligent looking backward.
+```
+
+### Strategy identity
+
+`StrategyVersion` is, and must remain, independent of: broker; broker account; trader; TRON instance; deployment host; execution venue; NEO instance. The same immutable `StrategyVersion` may be tested, and eventually deployed, in multiple independent execution environments. DARWIN's current identity model (§10, §20) already satisfies this by construction — no broker/account/TRON/venue field exists anywhere on `StrategyCandidate`, `StrategyVersion`, or `ResearchRun`.
+
+### Instrument-specific proof
+
+Unchanged from Amendment A-001, restated for emphasis: `StrategyVersion != proof on every instrument`. A strategy must be independently tested against each canonical `InstrumentId`. A strategy proven on `XAU_USD` is not thereby proven on `EUR_USD`, `BTC_USD`, `USD_JPY`, or any other instrument. A-001 remains authoritative.
+
+### Policy identity separation
+
+DARWIN must not design so that future deployment configuration collapses into `StrategyVersion` identity. Independent future identities are reserved (not implemented in PID-001): `StrategyVersion`; `ParameterSetVersion`; `ExecutionPolicyVersion`; `DIKEPolicyVersion`; `SizingPolicyVersion`; `NewsContextPolicyVersion` where applicable; `BrokerContract`/`AdapterVersion`. Each is a distinct future axis of identity, not a field folded into another.
+
+### Future execution-instance compatibility
+
+Compatibility with a future operational identity such as `TronInstanceId` is reserved. TRON and fleet management are NOT implemented now. `TronInstanceId` must never become part of `StrategyVersion` identity — an execution instance is where/how a proven strategy runs, never what makes the strategy itself immutable.
+
+### Evidence compatibility
+
+Today's identifiers must not prevent a future evidence envelope from associating: strategy/version; instrument; parameter set; execution policy; DIKE policy; sizing policy; context policy; execution-instance identity; broker/execution profile; normalized outcome; provenance. The complete future evidence envelope is explicitly NOT implemented during PID-001 — today's `ResearchRun`/`ATHENA_RESULT`/`APOLLO_PROOF` model (§11, §9) must simply not close off room for these associations later.
+
+### Broker abstraction
+
+Canonical principle: **brokers are adapters beneath TRON.** DARWIN must not encode broker assumptions in strategy semantics. Any wording implying an architectural concept such as an "OANDA Trading Cell," "Vantage Trading Cell," or "crypto Trading Cell" is superseded — those are execution resources/endpoints, not architectural identities. (Verified 2026-09-17: no such wording exists anywhere in DARWIN's current product-authority documents or source; this paragraph is a standing prohibition against introducing it, not a correction of an existing defect.)
+
+### NEO / SOCRATES compatibility doctrine (recorded, not implemented)
+
+NEO is future local analytical intelligence; NEO feeds back, not in; NEO produces hypotheses, not live discretionary decisions. SOCRATES is future population-level intelligence across multiple execution environments; SOCRATES also produces hypotheses only. Hypotheses from either return to DARWIN; DARWIN mechanically tests them before governed promotion — DARWIN proves what NEO and SOCRATES think they have learned. Neither NEO nor SOCRATES is implemented by this amendment.
+
+### Milestone unaffected
+
+This amendment does not change DARWIN's current programme milestone (§2): at least five independently promising XAUUSD strategies discovered, normalised, optimised and sequentially proven using canonical HERMES history. Multi-instrument capability remains foundational (Amendment A-001); XAUUSD remains the first proving market. This amendment expands no current implementation scope — it records compatibility invariants only.
+
+---
+
+## 22b. Amendment A-003 — DIKE deterministic capital-protection doctrine (previously issued; incorporated 2026-09-17)
+
+DIKE is DARWIN's deterministic capital-protection policy domain (§5.12, `dike/`). This section records the durable doctrine; Foundation (§1a of `docs/pids/PID-001-FOUNDATION.md`) implements only the identity substrate, never an evaluator.
+
+### Responsibility split
+
+- **DARWIN researches and proves** DIKE policy behaviour against historical evidence — the same evidence discipline as any other candidate parameter (§11).
+- **TRON enforces live.** DARWIN never enforces a DIKE policy against live capital; that authority belongs entirely to TRON, consistent with Amendment A-004R1's boundary (§22a) — DARWIN is not given architectural authority over TRON.
+- **NEO may learn/propose, never mutate/bypass.** NEO may produce a hypothesis about a better DIKE policy; it may never directly mutate an enforced policy or bypass one, live or in DARWIN's own research evidence.
+- **HELIOS remains DIKE/capital unaware.** HELIOS's deterministic strategy evaluation carries no capital-protection or DIKE awareness of its own — that layer sits outside HELIOS entirely.
+- **ATHENA:** authorised DIKE parameter search only, exactly like any other execution-policy dimension the candidate specification opens for search (§13). ATHENA never invents an unauthorised DIKE search dimension.
+- **APOLLO:** proves one exact, frozen, causal DIKE configuration — the same discipline APOLLO applies to every other frozen candidate parameter (§8, §9). APOLLO does not optimise DIKE policy during proof.
+- **Qualification and ARENA** must distinguish DIKE-guarded evidence from DIKE-disabled evidence explicitly in every gate and every display — never blended, never presented as equivalent.
+
+### DIKE policy identity
+
+DIKE policy identity is immutable and versioned, the same discipline DARWIN already applies to `StrategyVersion` (§10) and `InstrumentDefinition` (§7a). A DIKE-guarded `ResearchRun` binds an explicit, durable `dike_policy_id`/`dike_policy_version`/`dike_policy_fingerprint`; a later redefinition of a DIKE policy must never silently change what past DIKE-guarded evidence meant.
+
+### Durable architectural invariants (recorded here; see also `MEMORY.md`)
+
+- **`DIKE_DISABLED` is the scientific baseline.** Research may run with DIKE disabled entirely — that is not an error state, it is the default, unguarded scientific condition.
+- **TRON's hard limits are sovereign; the stricter constraint always wins.** No DARWIN research configuration, however it is proven, may be interpreted as relaxing a TRON-enforced hard limit.
+- **No direct feedback mutation.** Nothing — not NEO, not SOCRATES, not any future automated process — may mutate a DIKE policy directly from a learned hypothesis; every change is a new, immutable, versioned policy that goes through the same research/proof discipline as any other candidate parameter.
+- **Historical evidence is never rewritten.** A later DIKE policy change never alters what an already-recorded `ResearchRun`'s DIKE identity meant at the time it ran.
 
 ---
 
