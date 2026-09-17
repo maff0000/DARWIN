@@ -1,8 +1,10 @@
 # DARWIN
 
-DARWIN is a continuously operating research appliance that discovers,
-normalises, optimises, independently proves and qualifies XAUUSD trading
-strategies. It is a research/incubation side-chain — it does not place live
+DARWIN is a continuously operating, multi-instrument research appliance that
+discovers, normalises, optimises, independently proves and qualifies trading
+strategies for any canonical instrument HERMES makes available. XAUUSD is
+the first programme milestone and initial proving market, not a product
+boundary (Amendment A-001). It is a research/incubation side-chain — it does not place live
 trades and is not on the live capital-control path. See [`PID.md`](PID.md)
 for the full product constitution.
 

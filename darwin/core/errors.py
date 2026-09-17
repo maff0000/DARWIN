@@ -37,6 +37,15 @@ class InvalidRequestError(DarwinError):
     code = "INVALID_REQUEST"
 
 
+class RunBindingError(DarwinError):
+    """A ResearchRun's instrument/timeframe disagrees with its bound
+    MarketDataset (Amendment A-001 -- PID-001 §1a). Rejected at creation,
+    never silently stored.
+    """
+
+    code = "RUN_BINDING_MISMATCH"
+
+
 def to_error_response(exc: DarwinError) -> dict:
     """Sanitised error body — never includes secrets, stack traces, or connection strings."""
     return {"error": {"code": exc.code, "message": str(exc)}}

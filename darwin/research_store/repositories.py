@@ -156,8 +156,9 @@ class ResearchRunRepository:
                 """
                 INSERT INTO research_runs
                     (id, result_kind, engine, build_version, status,
+                     instrument, timeframe, display_title,
                      candidate_id, version_id, dataset_id, configuration_fingerprint)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     r.id,
@@ -165,6 +166,9 @@ class ResearchRunRepository:
                     r.engine,
                     r.build_version,
                     r.status,
+                    r.instrument,
+                    r.timeframe,
+                    r.display_title,
                     r.candidate_id,
                     r.version_id,
                     r.dataset_id,

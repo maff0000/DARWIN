@@ -15,8 +15,16 @@ HERMES_REPOSITORY = "github.com/maff0000/hermes"
 HERMES_CONTRACT_COMMIT = "3f90e640c9c9c1f4a22ba4ac586a1d478f35a997"
 HERMES_CONTRACT_VERSION = "v1"
 
-# DARWIN's initial market scope (PID.md §1). Extending this list is a product
-# decision, not something the adapter infers from a caller-supplied string.
+# Defence-in-depth allowlist of instrument values DARWIN will query HERMES
+# for -- an explicit, closed set, never inferred from a caller-supplied
+# string. This is NOT a product-boundary decision (Amendment A-001, PID.md
+# §1: DARWIN's product capability is multi-instrument) -- it currently
+# mirrors HERMES's own canonical historical surface, which as of 2026-09-17
+# contains exactly one instrument. Every code path that consumes an
+# instrument (validate_rows, MarketDataset, fingerprinting, ResearchRun
+# binding) is already instrument-generic; extending this set is purely a
+# data-availability fact tied to HERMES onboarding a new instrument, not an
+# architecture change here.
 ALLOWED_INSTRUMENTS: frozenset[str] = frozenset({"XAU_USD"})
 
 

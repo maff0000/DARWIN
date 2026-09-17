@@ -64,11 +64,23 @@ class MarketDatasetRecord:
 
 @dataclass(frozen=True)
 class ResearchRun:
+    """The concrete test instance (Amendment A-001, PID-001 §1a): a
+    StrategyCandidate/StrategyVersion tested against one InstrumentId +
+    Timeframe + MarketDataset. instrument/timeframe/display_title are
+    explicit durable facts here, not only reachable via a join to
+    market_datasets -- see darwin.research_store.run_binding.create_research_run,
+    which is the only supported way to construct one (it enforces the
+    instrument/timeframe agreement with the bound dataset).
+    """
+
     id: str
     result_kind: EvidenceLevel
     engine: str
     build_version: str
     status: str
+    instrument: str
+    timeframe: str
+    display_title: str
     candidate_id: str | None = None
     version_id: str | None = None
     dataset_id: str | None = None

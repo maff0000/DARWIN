@@ -12,7 +12,6 @@ from darwin.core.lifecycle import PipelineStage
 from darwin.research_store.db import connection
 from darwin.research_store.models import (
     MarketDatasetRecord,
-    ResearchRun,
     SourceStrategy,
     StrategyCandidate,
 )
@@ -22,6 +21,7 @@ from darwin.research_store.repositories import (
     SourceStrategyRepository,
     StrategyCandidateRepository,
 )
+from darwin.research_store.run_binding import create_research_run
 
 pytestmark = pytest.mark.integration
 
@@ -90,14 +90,33 @@ def test_market_dataset_metadata_persists_and_reads_back(pg_config):
 def test_research_run_lifecycle(pg_config):
     with connection(pg_config) as conn:
         repo = ResearchRunRepository(conn)
-        run_id = new_id()
-        repo.create(
-            ResearchRun(
-                id=run_id, result_kind=EvidenceLevel.ATHENA_RESULT, engine="foundation-proof",
-                build_version="test", status="RUNNING",
-            )
+        run = create_research_run(
+            result_kind=EvidenceLevel.ATHENA_RESULT, engine="foundation-proof",
+            build_version="test", status="RUNNING", instrument="XAU_USD", timeframe="H1",
+            run_type="ATHENA", strategy_title="Foundation proof strategy", version_label="v1",
         )
-        repo.update_status(run_id, "COMPLETE")
-        fetched = repo.get(run_id)
+        repo.create(run)
+        repo.update_status(run.id, "COMPLETE")
+        fetched = repo.get(run.id)
         assert fetched["status"] == "COMPLETE"
         assert fetched["result_kind"] == "ATHENA_RESULT"
+
+
+def test_research_run_instrument_timeframe_title_persist_and_read_back(pg_config):
+    """Amendment A-001 item D: run/API representation (this is exactly the dict
+    darwin.app's /runs and /runs/{id} return -- SELECT * FROM research_runs) must
+    contain instrument, timeframe, result kind, and the human-readable title.
+    """
+    with connection(pg_config) as conn:
+        repo = ResearchRunRepository(conn)
+        run = create_research_run(
+            result_kind=EvidenceLevel.APOLLO_PROOF, engine="apollo-proof", build_version="test",
+            status="COMPLETE", instrument="EUR_USD", timeframe="M15", run_type="APOLLO",
+            strategy_title="Mean Reversion", version_label="v7",
+        )
+        repo.create(run)
+        fetched = repo.get(run.id)
+        assert fetched["instrument"] == "EUR_USD"
+        assert fetched["timeframe"] == "M15"
+        assert fetched["result_kind"] == "APOLLO_PROOF"
+        assert fetched["display_title"] == "<EUR_USD · M15> Mean Reversion v7 — APOLLO"
