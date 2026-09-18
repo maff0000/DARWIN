@@ -223,8 +223,14 @@ def _validate_draft_origin_pair(
         (non-None id, revision) with revision >= 1   -- PID-004A finalisation
 
     Rejects, each with a distinguishable message: an id given without a
-    revision, a revision given without an id, and a non-positive
-    revision (0 or negative) given alongside an id."""
+    revision, a revision given without an id, a non-positive revision (0
+    or negative) given alongside an id, and -- closing GitHub issue #8
+    (PID004A_PRE_API_HARDENING, now blocking now that PID-004B introduces
+    an external/API authoring boundary) -- any non-integer revision type
+    (`bool`, `float`, `str`, or anything else). Never relies on PostgreSQL
+    to coerce/reject a wrong type; this function is the sole authority on
+    what counts as a genuine positive integer revision, checked before
+    any SQL is sent."""
     if source_draft_id is None and source_draft_revision is None:
         return
     if source_draft_id is None and source_draft_revision is not None:
@@ -236,6 +242,16 @@ def _validate_draft_origin_pair(
         raise InconsistentDraftOriginError(
             f"source_draft_id={source_draft_id!r} was given without a source_draft_revision -- "
             f"a PID-004A finalisation must record which exact draft revision it finalised"
+        )
+    # `bool` is a subclass of `int` in Python (`isinstance(True, int)` is
+    # True) -- excluded explicitly, it is never a legitimate revision
+    # value. `float`/`str`/anything else is rejected outright rather than
+    # letting the `<= 0` comparison below raise an unrelated TypeError
+    # (str) or silently truncate at the database layer (float).
+    if isinstance(source_draft_revision, bool) or not isinstance(source_draft_revision, int):
+        raise InconsistentDraftOriginError(
+            f"source_draft_revision={source_draft_revision!r} must be a genuine positive "
+            f"int (source_draft_id={source_draft_id!r}) -- got {type(source_draft_revision).__name__}"
         )
     if source_draft_revision <= 0:
         raise InconsistentDraftOriginError(
