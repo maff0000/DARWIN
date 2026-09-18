@@ -109,10 +109,13 @@ def test_0009_upgrade_path_applies_cleanly_and_preserves_existing_data(fresh_dat
         assert outcome.strategy_version is not None
         strategy_version_id = outcome.strategy_version.strategy_version_id
 
-    # Now apply 0009 on top, using the REAL, full migrations directory --
-    # only 0009 should be newly applied.
+    # Now apply the rest on top, using the REAL, full migrations directory
+    # -- 0009 (this file's own subject) plus any later additive migration
+    # (e.g. 0010's PID-004B Workshop UI enablement column) should be newly
+    # applied; nothing before 0009 should re-apply.
     applied_now = run_migrations(fresh_database, MIGRATIONS_DIR)
-    assert applied_now == ["0009_strategy_workshop"]
+    assert applied_now[0] == "0009_strategy_workshop"
+    assert all(not v.startswith(("0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008")) for v in applied_now)
     state = migration_state(fresh_database, MIGRATIONS_DIR)
     assert state["up_to_date"] is True
 
