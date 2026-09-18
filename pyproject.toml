@@ -38,6 +38,7 @@ testpaths = ["tests"]
 markers = [
   "integration: requires a real disposable PostgreSQL instance (DARWIN_TEST_PG_DSN)",
   "hermes_dev: requires real HERMES DEV credentials (DARWIN_TEST_HERMES_* env)",
+  "migration_authority: requires DB-admin-scoped authority (e.g. CREATE DATABASE) beyond the ordinary restricted darwin_app runtime role -- deselect this marker when verifying test-suite health under a runtime/app-role connection; select it under a migration/admin-role connection",
 ]
 
 [tool.setuptools.package-data]

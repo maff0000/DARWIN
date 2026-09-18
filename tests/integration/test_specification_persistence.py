@@ -34,6 +34,7 @@ from darwin.research_store.specification_finalisation import (
 from darwin.research_store.specification_repositories import (
     DataReadinessAssessmentRepository,
     DataRequirementProjectionRepository,
+    InconsistentDraftOriginError,
     ShelvingRepository,
     SpecificationDraftRepository,
     SpecificationVersionRepository,
@@ -163,6 +164,7 @@ def test_migration_runner_is_idempotent_running_twice(pg_config):
     assert applied_again == []  # nothing re-applied, no error
 
 
+@pytest.mark.migration_authority
 def test_0006_applies_cleanly_after_0001_through_0005_and_preexisting_rows_survive():
     """A from-scratch proof, deliberately NOT using the shared session
     `pg_config` fixture (which already applies every migration including
@@ -721,6 +723,315 @@ def test_db_unique_index_backstops_a_missed_application_level_idempotency_check(
                 (rogue_version_id,),
             )
             assert cur.fetchone()["n"] == 1  # the failed insert attempt left no partial data behind
+
+
+# ============================================================================
+# Source-draft identity integrity (persistence-contract closure gap 1/1b):
+# migration 0008's CHECK constraint + SpecificationVersionRepository.
+# create()'s _validate_draft_origin_pair guard independently enforce the
+# same invariant:
+#   (None, None)                                -- legacy/Foundation rows
+#   (non-None id, revision) with revision >= 1  -- PID-004A rows
+# ============================================================================
+
+
+def test_repository_rejects_source_draft_id_without_revision(pg_config):
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        precomputed = finalise(draft, strategy_version_id=new_id())
+        assert precomputed.strategy_version is not None
+        with pytest.raises(InconsistentDraftOriginError):
+            SpecificationVersionRepository(conn).create(
+                precomputed.strategy_version, source_draft_id=draft.draft_id, source_draft_revision=None,
+            )
+
+
+def test_repository_rejects_source_draft_revision_without_id(pg_config):
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        precomputed = finalise(draft, strategy_version_id=new_id())
+        assert precomputed.strategy_version is not None
+        with pytest.raises(InconsistentDraftOriginError):
+            SpecificationVersionRepository(conn).create(
+                precomputed.strategy_version, source_draft_id=None, source_draft_revision=1,
+            )
+
+
+@pytest.mark.parametrize("bad_revision", [0, -1, -5])
+def test_repository_rejects_non_positive_source_draft_revision(pg_config, bad_revision):
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        precomputed = finalise(draft, strategy_version_id=new_id())
+        assert precomputed.strategy_version is not None
+        with pytest.raises(InconsistentDraftOriginError):
+            SpecificationVersionRepository(conn).create(
+                precomputed.strategy_version,
+                source_draft_id=draft.draft_id,
+                source_draft_revision=bad_revision,
+            )
+
+
+def test_raw_sql_insert_with_draft_id_and_no_revision_is_rejected_by_db_constraint_directly(pg_config):
+    """Bypasses the repository guard entirely (raw SQL, no
+    SpecificationVersionRepository involved) -- proves migration 0008's
+    CHECK constraint is a real, independent database-layer backstop, not
+    merely something the repository happens to also check."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        version_id = new_id()
+        with pytest.raises(psycopg.errors.CheckViolation), conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO strategy_versions
+                    (id, candidate_id, version_label, source_draft_id, source_draft_revision)
+                VALUES (%s, %s, %s, %s, NULL)
+                """,
+                (version_id, candidate_id, version_id, draft.draft_id),
+            )
+        conn.rollback()
+
+
+def test_raw_sql_insert_with_revision_and_no_draft_id_is_rejected_by_db_constraint_directly(pg_config):
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        version_id = new_id()
+        with pytest.raises(psycopg.errors.CheckViolation), conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO strategy_versions
+                    (id, candidate_id, version_label, source_draft_id, source_draft_revision)
+                VALUES (%s, %s, %s, NULL, 1)
+                """,
+                (version_id, candidate_id, version_id),
+            )
+        conn.rollback()
+
+
+def test_foundation_style_row_with_both_columns_null_still_inserts_fine(pg_config):
+    """The pre-PID-004A `darwin.research_store.repositories.
+    StrategyVersionRepository` never even mentions source_draft_id/
+    source_draft_revision -- both come out NULL by column omission. This
+    is the legacy shape migration 0008's constraint must never break."""
+    from darwin.research_store.models import (
+        StrategyVersion as FoundationStrategyVersion,
+    )
+    from darwin.research_store.repositories import (
+        StrategyVersionRepository as FoundationStrategyVersionRepository,
+    )
+
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        version_id = new_id()
+        FoundationStrategyVersionRepository(conn).create(
+            FoundationStrategyVersion(id=version_id, candidate_id=candidate_id, version_label="v-legacy")
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT source_draft_id, source_draft_revision FROM strategy_versions WHERE id = %s",
+                (version_id,),
+            )
+            row = cur.fetchone()
+        assert row["source_draft_id"] is None
+        assert row["source_draft_revision"] is None
+
+
+def test_normal_finalisation_produces_a_row_satisfying_the_draft_origin_integrity_constraint(pg_config):
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        outcome = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+        row = SpecificationVersionRepository(conn).get_row(outcome.strategy_version.strategy_version_id)
+        assert str(row["source_draft_id"]) == draft.draft_id
+        assert row["source_draft_revision"] == 1
+
+
+@pytest.mark.migration_authority
+def test_0008_backfills_clean_pre_remediation_rows_and_fails_loudly_on_ambiguous_data():
+    """Forward-safety proof for migration 0008 (deliberately NOT using the
+    shared session `pg_config` fixture, which already has 0008 applied
+    before any test runs -- same reasoning as
+    `test_0006_applies_cleanly_after_0001_through_0005_and_preexisting_rows_survive`,
+    and, like that test, requires `CREATE DATABASE` -- hence the
+    `migration_authority` marker rather than plain `integration`).
+
+    Exercises 0008's backfill logic against manufactured pre-remediation
+    -shaped data (`source_draft_id IS NOT NULL`, `source_draft_revision IS
+    NULL`) that TODAY's code can never itself produce (the repository
+    guard added alongside this migration always writes both columns
+    together -- see the tests above) but that the OLD, pre-adversarial-
+    audit-fix-#1 finalisation code could have left behind on a real
+    pre-existing volume:
+
+      1. CLEAN case: exactly one matching VALID `specification_validation_
+         records` row for (strategy_version_id, draft_id) -- 0008 must
+         deterministically backfill that record's draft_revision and
+         succeed.
+      2. AMBIGUOUS case, zero candidates -- 0008 must FAIL LOUDLY.
+      3. AMBIGUOUS case, more than one candidate -- 0008 must FAIL LOUDLY.
+
+    Each case runs against its own fresh, disposable database (created
+    and dropped here) so that an aborted migration in one case can never
+    contaminate another.
+    """
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import darwin.research_store as _research_store
+    from darwin.core.config import PostgresConfig
+
+    dsn = os.environ.get("DARWIN_TEST_PG_DSN")
+    if not dsn:
+        pytest.skip("DARWIN_TEST_PG_DSN not set")
+    parsed = urlparse(dsn)
+    admin_cfg = PostgresConfig(
+        host=parsed.hostname or "localhost", port=parsed.port or 5432,
+        database=(parsed.path or "/darwin").lstrip("/"),
+        user=parsed.username or "darwin_test", password=parsed.password or "",
+    )
+    migrations_dir = Path(_research_store.__file__).resolve().parent / "migrations_sql"
+    all_files = sorted(migrations_dir.glob("*.sql"), key=lambda p: p.name)
+    pre_0008_files = [p for p in all_files if p.name < "0008"]
+    migration_0008 = next(p for p in all_files if p.name.startswith("0008"))
+
+    def _fresh_db_at_0001_through_0007() -> PostgresConfig:
+        db_name = f"darwin_0008_bf_{new_id().replace('-', '_')}"
+        with psycopg.connect(admin_cfg.dsn(), autocommit=True) as admin_conn, admin_conn.cursor() as cur:
+            cur.execute(f'CREATE DATABASE "{db_name}"')
+        cfg = PostgresConfig(
+            host=admin_cfg.host, port=admin_cfg.port, database=db_name,
+            user=admin_cfg.user, password=admin_cfg.password,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            for f in pre_0008_files:
+                shutil.copy(f, tmp_dir / f.name)
+            applied = run_migrations(cfg, tmp_dir)
+        assert "0008_strategy_version_draft_origin_integrity" not in applied
+        return cfg
+
+    def _drop_db(cfg: PostgresConfig) -> None:
+        with psycopg.connect(admin_cfg.dsn(), autocommit=True) as admin_conn, admin_conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s", (cfg.database,),
+            )
+            cur.execute(f'DROP DATABASE IF EXISTS "{cfg.database}"')
+
+    def _apply_0008(cfg: PostgresConfig) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            shutil.copy(migration_0008, tmp_dir / migration_0008.name)
+            return run_migrations(cfg, tmp_dir)
+
+    def _seed_pre_remediation_row(
+        conn, *, candidate_id: str, draft_id: str, revision_backfill_candidates: list[int]
+    ) -> tuple[str, str]:
+        """Manufactures exactly the shape the OLD finalisation code could
+        have left behind: a specification_drafts row, a strategy_versions
+        row inserted via raw SQL with source_draft_id set / source_draft_
+        revision NULL (today's repository guard would refuse this pair --
+        this test intentionally bypasses it to construct the scenario),
+        and one specification_validation_records VALID row per entry in
+        `revision_backfill_candidates` (0 entries = the "zero candidates"
+        ambiguous case, 2+ entries = the "more than one" ambiguous case,
+        exactly 1 entry = the clean case). Returns (version_id, draft_id).
+        """
+        draft = minimal_valid_draft()
+        draft.draft_id = draft_id
+        draft.candidate_id = candidate_id
+        SpecificationDraftRepository(conn).create(draft)
+
+        version_id = new_id()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO strategy_versions
+                    (id, candidate_id, version_label, source_draft_id, source_draft_revision)
+                VALUES (%s, %s, %s, %s, NULL)
+                """,
+                (version_id, candidate_id, f"pre-remediation-{version_id}", draft_id),
+            )
+        for revision in revision_backfill_candidates:
+            ValidationRecordRepository(conn).create(
+                draft_id=draft_id, draft_revision=revision, assessed_at_utc=datetime.now(UTC),
+                status="VALID", findings=[], strategy_version_id=version_id,
+            )
+        return version_id, draft_id
+
+    # --- 1. CLEAN case: exactly one candidate -> deterministic backfill ----
+    clean_cfg = _fresh_db_at_0001_through_0007()
+    try:
+        with connection(clean_cfg) as conn:
+            candidate_id = _new_candidate(conn, title="0008 backfill clean case")
+            version_id, draft_id = _seed_pre_remediation_row(
+                conn, candidate_id=candidate_id, draft_id=new_id(), revision_backfill_candidates=[3],
+            )
+
+        applied = _apply_0008(clean_cfg)
+        assert applied == ["0008_strategy_version_draft_origin_integrity"]
+
+        with connection(clean_cfg) as conn:
+            row = SpecificationVersionRepository(conn).get_row(version_id)
+            assert int(row["source_draft_revision"]) == 3
+            assert str(row["source_draft_id"]) == draft_id
+
+            # The CHECK constraint is now live and enforced going forward.
+            with pytest.raises(psycopg.errors.CheckViolation), conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO strategy_versions
+                        (id, candidate_id, version_label, source_draft_id, source_draft_revision)
+                    VALUES (%s, %s, %s, %s, NULL)
+                    """,
+                    (new_id(), candidate_id, new_id(), draft_id),
+                    )
+            conn.rollback()
+    finally:
+        _drop_db(clean_cfg)
+
+    # --- 2. AMBIGUOUS case: zero candidates -> fail loudly ------------------
+    zero_cfg = _fresh_db_at_0001_through_0007()
+    try:
+        with connection(zero_cfg) as conn:
+            candidate_id = _new_candidate(conn, title="0008 backfill zero-candidate case")
+            _seed_pre_remediation_row(
+                conn, candidate_id=candidate_id, draft_id=new_id(), revision_backfill_candidates=[],
+            )
+        with pytest.raises(psycopg.errors.RaiseException):
+            _apply_0008(zero_cfg)
+        state = migration_state(zero_cfg, migrations_dir)
+        assert "0008_strategy_version_draft_origin_integrity" not in state["applied"]
+    finally:
+        _drop_db(zero_cfg)
+
+    # --- 3. AMBIGUOUS case: more than one candidate -> fail loudly ----------
+    many_cfg = _fresh_db_at_0001_through_0007()
+    try:
+        with connection(many_cfg) as conn:
+            candidate_id = _new_candidate(conn, title="0008 backfill many-candidate case")
+            _seed_pre_remediation_row(
+                conn, candidate_id=candidate_id, draft_id=new_id(), revision_backfill_candidates=[1, 2],
+            )
+        with pytest.raises(psycopg.errors.RaiseException):
+            _apply_0008(many_cfg)
+        state = migration_state(many_cfg, migrations_dir)
+        assert "0008_strategy_version_draft_origin_integrity" not in state["applied"]
+    finally:
+        _drop_db(many_cfg)
 
 
 # ============================================================================
