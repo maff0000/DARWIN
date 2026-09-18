@@ -1,0 +1,91 @@
+# PID-004A adversarial-audit fix #2 (database privilege separation) --
+# reference/example only. This file is NOT wired into any real deployment
+# by this change -- it shows the dispatcher what a `compose.yaml` update
+# would need to look like to actually apply the role model implemented in
+# this directory (01/02/03_*.sql) to a real environment. Applying it to
+# the live darwin-deploy-build compose file is an explicit, separate,
+# later step (with Helm's coordination) -- out of scope here.
+#
+# Compare against the REAL, unmodified /srv/darwin-deploy-build/
+# compose.yaml this replaces the shape of:
+#
+#   darwin_sql:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_DB: ${DARWIN_PG_DB:-darwin}
+#       POSTGRES_USER: ${DARWIN_PG_USER:-darwin_app}          # <- the bug:
+#       POSTGRES_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
+#   darwin_core:
+#     environment:
+#       DARWIN_PG_HOST: darwin_sql
+#       DARWIN_PG_USER: ${DARWIN_PG_USER:-darwin_app}          # <- SAME credential
+#       DARWIN_PG_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
+#
+# -- POSTGRES_USER, on the official postgres image, is ALWAYS a genuine
+# database superuser, and here it is literally darwin_core's own runtime
+# credential. Below: three separated identities instead of one.
+
+services:
+  darwin_sql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DARWIN_PG_DB:-darwin}
+      # A TEMPORARY bootstrap administrator, distinct from every
+      # long-lived credential below -- exists only so the official image
+      # has *some* initial superuser to run initdb.d as. Never used by
+      # darwin_core or darwin migrate afterwards.
+      POSTGRES_USER: ${DARWIN_PG_BOOTSTRAP_ADMIN_USER:-darwin_bootstrap_admin}
+      POSTGRES_PASSWORD_FILE: /run/secrets/darwin_pg_bootstrap_admin_password
+      # Read by 01_fresh_bootstrap_roles.sql via psql's `\getenv` -- never
+      # written into the SQL file itself.
+      DARWIN_MIGRATOR_BOOTSTRAP_PASSWORD_FILE: /run/secrets/darwin_pg_migrator_password
+      DARWIN_APP_BOOTSTRAP_PASSWORD_FILE: /run/secrets/darwin_pg_app_password
+    volumes:
+      - darwin_sql_data:/var/lib/postgresql/data
+      # Only relevant the FIRST time a brand-new, empty volume is
+      # initialised -- see 01_fresh_bootstrap_roles.sql's own header for
+      # the full 3-step sequence (this script alone cannot grant
+      # table-level privileges, since no tables exist yet at initdb time).
+      - ../darwin/research_store/bootstrap/01_fresh_bootstrap_roles.sql:/docker-entrypoint-initdb.d/01_fresh_bootstrap_roles.sql:ro
+    secrets:
+      - darwin_pg_bootstrap_admin_password
+      - darwin_pg_migrator_password
+      - darwin_pg_app_password
+
+  darwin_core:
+    environment:
+      DARWIN_PG_HOST: darwin_sql
+      DARWIN_PG_DB: ${DARWIN_PG_DB:-darwin}
+      # The RESTRICTED runtime role -- NOSUPERUSER/NOCREATEDB/
+      # NOCREATEROLE/NOREPLICATION/NOBYPASSRLS, owns nothing, granted only
+      # the DML in 02_grant_app_table_privileges.sql.
+      DARWIN_PG_USER: ${DARWIN_PG_APP_USER:-darwin_app}
+      DARWIN_PG_PASSWORD_FILE: /run/secrets/darwin_pg_app_password
+    secrets:
+      - darwin_pg_app_password
+
+  # A separate, short-lived "migrate" job/profile -- NOT the long-running
+  # darwin_core service -- is the only thing that should ever authenticate
+  # as darwin_migrator, and only to run `darwin migrate`.
+  darwin_migrate:
+    image: ${DARWIN_CORE_IMAGE}
+    command: ["darwin", "migrate"]
+    environment:
+      DARWIN_PG_HOST: darwin_sql
+      DARWIN_PG_DB: ${DARWIN_PG_DB:-darwin}
+      DARWIN_PG_USER: darwin_migrator
+      DARWIN_PG_PASSWORD_FILE: /run/secrets/darwin_pg_migrator_password
+    secrets:
+      - darwin_pg_migrator_password
+    profiles: ["migrate"]  # `docker compose --profile migrate run darwin_migrate`
+
+secrets:
+  darwin_pg_bootstrap_admin_password:
+    external: true
+  darwin_pg_migrator_password:
+    external: true
+  darwin_pg_app_password:
+    external: true
+
+volumes:
+  darwin_sql_data:

@@ -41,4 +41,4 @@ markers = [
 ]
 
 [tool.setuptools.package-data]
-darwin = ["research_store/migrations_sql/*.sql", "static/**/*"]
+darwin = ["research_store/migrations_sql/*.sql", "research_store/bootstrap/*.sql", "research_store/bootstrap/*.yaml", "static/**/*"]
