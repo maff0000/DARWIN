@@ -27,6 +27,20 @@ ENV DARWIN_BUILD_COMMIT=${DARWIN_BUILD_COMMIT} \
     DARWIN_BUILD_TIME=${DARWIN_BUILD_TIME} \
     PYTHONUNBUFFERED=1
 
+# PID-004B Workshop UI enablement: `darwin.workshop.workspace`'s default
+# workspace root (`/srv/DARWIN/workspaces`) was never actually writable by
+# the `darwin` runtime user this image runs as -- `/srv` in a bare
+# `python:3.12-slim` base image is root-owned, mode 0755, and this
+# Dockerfile never created `/srv/DARWIN` at all before this line. Every
+# Workshop mutation's `_sync_workspace_best_effort` call has therefore
+# always failed with a silently-swallowed PermissionError in every real
+# deployment of this exact image (best-effort by design -- PID-004 sec47:
+# a workspace-sync failure must never fail the API call -- which is
+# exactly why nothing surfaced this until the Workshop UI's own
+# workspace-loss E2E proof went looking at the container's filesystem
+# directly). Narrow fix: create the directory and hand it to `darwin`
+# before dropping root, same as `/app` just below.
+RUN mkdir -p /srv/DARWIN/workspaces && chown -R darwin:darwin /srv/DARWIN
 RUN chown -R darwin:darwin /app
 USER darwin
 
