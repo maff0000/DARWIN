@@ -876,3 +876,335 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- PID-004B Strategy Workshop ---------- */
+/* Deliberately its own small badge languages, distinct from
+   status-badge/evidence-badge/intake-badge — a Workshop's operational
+   status, validation state, readiness state, question status, decision
+   acceptance state, and decision origin are six genuinely different axes
+   (PID-004B directive: "each visually distinct, never collapsed into one
+   generic status badge"). Every hue below is one of the existing tokens
+   (--ok/--degraded/--down/--signal/--evi-*) or a small set of new,
+   equally-restrained ones — never a rainbow of ad hoc colors. */
+
+.workshop-header {
+  align-items: flex-start;
+}
+.workshop-header__subtitle {
+  color: var(--ink-dim);
+  font-size: 12.5px;
+  margin-top: var(--space-1);
+}
+.workshop-header__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  max-width: 480px;
+}
+
+.workshop-chip,
+.workshop-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.workshop-chip--status-active {
+  color: var(--signal-ink);
+  background: var(--signal-dim);
+}
+.workshop-chip--status-finalised {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-chip--status-abandoned {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+.workshop-chip--revision {
+  color: var(--ink-dim);
+  background: var(--panel-raised);
+}
+.workshop-chip--strategy-version {
+  color: var(--evi-apollo);
+  background: var(--evi-apollo-bg);
+}
+
+.workshop-chip--validation-valid,
+.workshop-badge--validation-valid {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-chip--validation-strategy_not_sufficiently_defined,
+.workshop-badge--validation-strategy_not_sufficiently_defined {
+  color: var(--down);
+  background: var(--down-bg);
+}
+.workshop-chip--validation-unknown,
+.workshop-badge--validation-unknown {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+
+.workshop-chip--readiness-unassessed,
+.workshop-badge--readiness-unassessed {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+.workshop-chip--readiness-testable,
+.workshop-badge--readiness-testable {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-chip--readiness-data_blocked,
+.workshop-badge--readiness-data_blocked {
+  color: var(--degraded);
+  background: var(--degraded-bg);
+}
+
+.workshop-count-badge {
+  display: inline-block;
+  margin-left: var(--space-2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  background: var(--panel-raised);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.workshop-badge--question-open {
+  color: var(--degraded);
+  background: var(--degraded-bg);
+}
+.workshop-badge--question-resolved {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--question-withdrawn {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+
+.workshop-badge--decision-proposed {
+  color: var(--signal-ink);
+  background: var(--signal-dim);
+}
+.workshop-badge--decision-accepted {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--decision-rejected {
+  color: var(--down);
+  background: var(--down-bg);
+}
+.workshop-badge--decision-superseded {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+
+/* Decision ORIGIN — a distinct hue family from acceptance state above,
+   deliberately (PID-004B: "this distinction matters for the future MENDEL
+   slice, make it obvious now"). */
+.workshop-badge--origin-source_rule {
+  color: var(--evi-source);
+  background: var(--evi-source-bg);
+}
+.workshop-badge--origin-user_clarification {
+  color: var(--evi-plutus);
+  background: var(--evi-plutus-bg);
+}
+.workshop-badge--origin-workshop_proposal {
+  color: var(--evi-athena);
+  background: var(--evi-athena-bg);
+}
+
+.workshop-badge--mandatory {
+  color: var(--down);
+  background: var(--down-bg);
+}
+.workshop-badge--optional {
+  color: var(--ink-dim);
+  background: var(--panel-raised);
+}
+
+.workshop-badge--availability-available {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--availability-unavailable,
+.workshop-badge--availability-authority-not-onboarded,
+.workshop-badge--availability-insufficient-history,
+.workshop-badge--availability-insufficient-resolution,
+.workshop-badge--availability-contract-incompatible {
+  color: var(--degraded);
+  background: var(--degraded-bg);
+}
+.workshop-badge--availability-unknown {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+
+.workshop-badge--policy-required {
+  color: var(--down);
+  background: var(--down-bg);
+}
+.workshop-badge--policy-permitted {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--policy-disabled,
+.workshop-badge--policy-irrelevant {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+
+.workshop-row--superseded {
+  opacity: 0.55;
+}
+
+.workshop-raw-symbol {
+  font-weight: 600;
+  color: var(--evi-source);
+}
+
+.workshop-subheading {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.workshop-question-list,
+.workshop-composition-group {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.workshop-question {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--panel-raised);
+}
+.workshop-question--resolved {
+  opacity: 0.7;
+}
+.workshop-question__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.workshop-question__text {
+  font-size: 13px;
+}
+.workshop-question__rationale,
+.workshop-question__linked {
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+.workshop-semantic-subject {
+  color: var(--signal);
+}
+
+.workshop-question-form,
+.workshop-decision-form {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.workshop-proposed-value {
+  max-width: 260px;
+  overflow-x: auto;
+  white-space: nowrap;
+  display: block;
+}
+
+.workshop-atomic-card {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--ground-raised);
+  display: grid;
+  gap: var(--space-2);
+}
+.workshop-comparison-editor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.workshop-operand-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  min-width: 220px;
+}
+.workshop-operand-fields {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.workshop-operand-fields input,
+.workshop-operand-fields select {
+  min-width: 90px;
+  flex: 1;
+}
+
+.workshop-sequence-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.workshop-context-trigger-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  margin: var(--space-2) 0 0;
+}
+
+.workshop-input--invalid {
+  border-color: var(--down) !important;
+}
+
+.workshop-json-view {
+  max-height: 360px;
+  overflow: auto;
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--ink-dim);
+}
+
+.workshop-finalise-consequence {
+  font-weight: 600;
+  color: var(--degraded);
+}
+.workshop-finalised-statement {
+  font-weight: 600;
+  color: var(--ok);
+  margin-bottom: var(--space-3);
+}
+.workshop-finalised-panel .kv-list {
+  padding: 0 0 var(--space-3);
+}
