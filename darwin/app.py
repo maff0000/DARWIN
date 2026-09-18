@@ -42,6 +42,7 @@ from darwin.scout import service as scout_service
 from darwin.scout.domain import IntakeStatus, OriginKind
 from darwin.scout.service import MAX_RECORDS_PER_RUN, ScoutRequestError
 from darwin.scout.trader_dev_adapter import ALLOWED_SORTS as SCOUT_ALLOWED_SORTS
+from darwin.workshop.api import register_workshop_routes
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +333,12 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
                 discovery_id, body.target_status, changed_by=body.changed_by, reason=body.reason
             )
         return {"discovery": updated}
+
+    # --- PID-004B Strategy Workshop (docs/pids/PID-004-SPECIFICATION-WORKSHOP.md
+    # sec45-sec56) -- routes live in darwin.workshop.api, kept out of this file
+    # to avoid unbounded growth; wired the same way SCOUT's routes are (same
+    # FastAPI app/process, not a separate service -- PID-004 sec53).
+    register_workshop_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
 
     _mount_arena(app)
 
