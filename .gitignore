@@ -21,3 +21,9 @@ frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
 frontend/screenshots/
+
+# PID-004B: seed.py's own generated fixture-id file (read by CI steps
+# after seeding runs, e.g. the workspace-loss E2E proof) — runtime output,
+# never committed.
+frontend/e2e/fixtures/.seed_output.json
+frontend/e2e/fixtures/.workshop_scout_flow_id.txt

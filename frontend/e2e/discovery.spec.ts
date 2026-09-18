@@ -10,7 +10,11 @@ import { test, expect } from "@playwright/test";
 //   - "London Range Break (Reddit)"    — USER_DISCOVERED, READY_FOR_SPECIFICATION
 //   - "VWAP Reversion Idea"            — MY_IDEA, IN_WORKSHOP
 //   - "Fib Cluster Reversal Idea (superseded)" — MY_IDEA, REJECTED
-// = 6 total, DISCOVERED-equivalent (NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION) = 5.
+//   - "E2E Workshop Source — XAUUSD Session Breakout" — USER_DISCOVERED, NEW
+//     (PID-004B: seeded in its OWN dedicated section, deliberately never
+//     touched by this file's own mutating-actions block — see
+//     e2e/workshop.spec.ts, which owns it exclusively)
+// = 7 total, DISCOVERED-equivalent (NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION) = 6.
 //
 // The CI job also points mcp-api.trader.dev at an unreachable host for
 // every e2e container (same discipline degraded.spec.ts already documents
@@ -28,7 +32,7 @@ test.describe("Discovery list — SCOUT radar (read-only)", () => {
   test("renders real intake counts, source health, and the SOURCE_CLAIM leaderboard", async ({ page }) => {
     await page.goto("/discovery");
     await expect(page.getByRole("heading", { name: "Discovery" })).toBeVisible();
-    await expect(page.getByText("6 discovered")).toBeVisible();
+    await expect(page.getByText("7 discovered")).toBeVisible();
 
     // total + 5 intake-state stat cards, all real counts_by_intake_status
     await expect(page.locator(".stat-card")).toHaveCount(6);
@@ -81,7 +85,7 @@ test.describe("Discovery list — SCOUT radar (read-only)", () => {
 });
 
 test.describe("Discovery detail (read-only)", () => {
-  test("renders source identity, SOURCE_CLAIM metrics, snapshot history, audit trail, and an honestly-disabled Workshop button", async ({ page }) => {
+  test("renders source identity, SOURCE_CLAIM metrics, snapshot history, audit trail, and a real Open Workshop action", async ({ page }) => {
     await page.goto("/discovery");
     await page.getByRole("cell", { name: "London Range Break (Reddit)" }).locator("a").click();
     await expect(page).toHaveURL(/\/discovery\/[a-f0-9-]+$/);
@@ -104,10 +108,12 @@ test.describe("Discovery detail (read-only)", () => {
     // first real transition on this discovery)
     await expect(page.getByText(/Clear rules, plausible claim/)).toBeVisible();
 
+    // PID-004B: Open Workshop is now a real, enabled action against the
+    // real backend — see e2e/workshop.spec.ts for the full real-browser
+    // Workshop proof (this file stays SCOUT/PID-003-scoped, read-only).
     const workshopButton = page.getByRole("button", { name: "Open Workshop" });
     await expect(workshopButton).toBeVisible();
-    await expect(workshopButton).toBeDisabled();
-    await expect(page.getByText(/PID-004/)).toBeVisible();
+    await expect(workshopButton).toBeEnabled();
   });
 
   test("MY_IDEA detail shows no external source and no metrics", async ({ page }) => {
@@ -128,7 +134,7 @@ test.describe("Pipeline reflects real SCOUT persistence", () => {
   test("DISCOVERED count matches NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION discoveries", async ({ page }) => {
     await page.goto("/pipeline");
     const discoveredCard = page.locator(".stat-card", { hasText: "DISCOVERED" });
-    await expect(discoveredCard.locator(".stat-card__value")).toHaveText("5");
+    await expect(discoveredCard.locator(".stat-card__value")).toHaveText("6");
   });
 });
 
