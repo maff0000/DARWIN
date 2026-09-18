@@ -162,6 +162,21 @@ jobs:
             -v ${{ github.workspace }}:/work -w /work \
             python:3.12-slim bash -c "pip install -q -e . && darwin migrate && python frontend/e2e/fixtures/seed.py"
 
+      - name: Export PID-004B Workshop fixture ids for the E2E run
+        # seed.py's own .seed_output.json (written alongside its stdout —
+        # see the script's own comment) is the only reliable place to read
+        # these freshly-generated UUIDs from; this step's stdout would
+        # otherwise be mixed with pip/darwin-migrate log noise.
+        run: |
+          python3 - <<'PYEOF' >> "$GITHUB_ENV"
+          import json
+          d = json.load(open("frontend/e2e/fixtures/.seed_output.json"))["workshop_fixture_ids"]
+          print(f"DARWIN_E2E_WORKSHOP_SCOUT_DISCOVERY_ID={d['scout_flow_discovery_id']}")
+          print(f"DARWIN_E2E_WORKSHOP_COMPLETE_ID={d['complete_workshop_id']}")
+          print(f"DARWIN_E2E_WORKSHOP_DATA_BLOCKED_ID={d['data_blocked_workshop_id']}")
+          print(f"DARWIN_E2E_WORKSHOP_STALE_EDIT_ID={d['stale_edit_workshop_id']}")
+          PYEOF
+
       - name: Start DARWIN_core against the seeded database (HERMES + Trader.dev deliberately unreachable — proves degraded-but-ready)
         # --add-host pins mcp-api.trader.dev (darwin/scout/trader_dev_adapter.py
         # ALLOWED_API_HOST) to an address nothing listens on inside this
@@ -191,7 +206,29 @@ jobs:
         working-directory: frontend
         env:
           DARWIN_E2E_BASE_URL: http://localhost:8000
-        run: npx playwright test e2e/shell.spec.ts e2e/shell-refinement.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts e2e/discovery.spec.ts
+        run: npx playwright test e2e/shell.spec.ts e2e/shell-refinement.spec.ts e2e/datasets.spec.ts e2e/runs.spec.ts e2e/degraded.spec.ts e2e/discovery.spec.ts e2e/workshop.spec.ts
+
+      - name: PID-004B workspace-loss proof — delete the on-disk workspace and reload the page
+        # Genuine-gap-driven proof (PID-004B directive scenario 6): the
+        # SAME real Workshop e2e/workshop.spec.ts's scenario-1 test just
+        # mutated (its id was written to a file by that test, in the SAME
+        # working directory Playwright ran in) has its on-disk authoring
+        # workspace deleted directly on the running darwin_core container
+        # -- via the backend's own filesystem, never a new production UI
+        # control -- then a dedicated Playwright test reloads that exact
+        # Workshop page and proves the canonical, DB-backed state is still
+        # fully correct.
+        run: |
+          WSID=$(cat frontend/e2e/fixtures/.workshop_scout_flow_id.txt)
+          echo "Deleting on-disk workspace for Workshop $WSID"
+          docker exec darwin_e2e_core rm -rf "/srv/DARWIN/workspaces/$WSID"
+          echo "DARWIN_E2E_WORKSPACE_LOSS_WORKSHOP_ID=$WSID" >> "$GITHUB_ENV"
+
+      - name: Run workspace-loss E2E proof
+        working-directory: frontend
+        env:
+          DARWIN_E2E_BASE_URL: http://localhost:8000
+        run: npx playwright test e2e/workshop-workspace-loss.spec.ts
 
       - name: Tear down populated stack, stand up a fresh unseeded one for empty-state proof
         run: |
