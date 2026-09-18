@@ -217,6 +217,7 @@ class SpecificationVersionRepository:
         *,
         version_label: str | None = None,
         source_draft_id: str | None = None,
+        source_draft_revision: int | None = None,
     ) -> None:
         label = version_label or version.strategy_version_id
         full_payload = serialize_strategy_version(version)
@@ -227,8 +228,8 @@ class SpecificationVersionRepository:
                     (id, candidate_id, version_label, specification_fingerprint, is_immutable,
                      title, thesis, schema_semantic_version, semantic_fingerprint,
                      artifact_record_fingerprint, full_payload, serialization_schema_version,
-                     source_draft_id, finalised_at_utc)
-                VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     source_draft_id, source_draft_revision, finalised_at_utc)
+                VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     version.strategy_version_id,
@@ -243,6 +244,7 @@ class SpecificationVersionRepository:
                     json.dumps(full_payload),
                     SERIALIZATION_SCHEMA_VERSION,
                     source_draft_id,
+                    source_draft_revision,
                     version.finalised_at_utc,
                 ),
             )
@@ -276,6 +278,24 @@ class SpecificationVersionRepository:
                 (semantic_fingerprint,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+    def get_row_by_draft_and_revision(
+        self, source_draft_id: str, source_draft_revision: int
+    ) -> dict | None:
+        """Adversarial-audit fix #1 (finalisation idempotency): the
+        read half of the `(source_draft_id, source_draft_revision)`
+        uniqueness invariant enforced by migration 0007's partial unique
+        index -- used by
+        `darwin.research_store.specification_finalisation` to detect that
+        this exact draft revision has already been finalised, before
+        (and, as a DB-level backstop, after) attempting a new INSERT."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM strategy_versions WHERE source_draft_id = %s AND source_draft_revision = %s",
+                (source_draft_id, source_draft_revision),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
 
 # --- data requirement projection (item 8) ------------------------------------

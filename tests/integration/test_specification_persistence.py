@@ -14,6 +14,7 @@ out of scope for this persistence proof.
 """
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from decimal import Decimal
 from urllib.parse import urlparse
@@ -27,6 +28,7 @@ from darwin.research_store.migrations import migration_state, run_migrations
 from darwin.research_store.models import StrategyCandidate
 from darwin.research_store.repositories import StrategyCandidateRepository
 from darwin.research_store.specification_finalisation import (
+    SpecificationDraftRevisionAlreadyFinalisedConflictError,
     finalise_specification_draft,
 )
 from darwin.research_store.specification_repositories import (
@@ -494,6 +496,234 @@ def test_data_blocked_strategy_still_finalises_and_candidate_still_advances(pg_c
 
 
 # ============================================================================
+# Finalisation idempotency (adversarial-audit fix #1): a particular
+# (draft_id, draft_revision) pair may create AT MOST ONE StrategyVersion.
+# ============================================================================
+
+
+def test_sequential_duplicate_finalisation_retry_is_idempotent_not_a_second_version(pg_config):
+    """A non-concurrent, retried call (same draft_id/expected_revision)
+    must return the SAME StrategyVersion, never mint a second one or write
+    a second VALID validation record."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+
+        first = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+        assert first.strategy_version is not None
+
+    with connection(pg_config) as conn:
+        second = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+
+    assert second.strategy_version is not None
+    assert second.strategy_version.strategy_version_id == first.strategy_version.strategy_version_id
+    assert second.validation_record_id == first.validation_record_id
+    assert second.candidate_advanced is False  # nothing new was advanced on the retry
+
+    with connection(pg_config) as conn:
+        rows = SpecificationVersionRepository(conn).list_for_candidate(candidate_id)
+        assert len(rows) == 1
+
+        valid_records = [
+            r for r in ValidationRecordRepository(conn).list_for_draft(draft.draft_id) if r["status"] == "VALID"
+        ]
+        assert len(valid_records) == 1
+
+
+def test_finalising_a_new_revision_after_an_edit_creates_a_genuinely_new_strategy_version(pg_config):
+    """Finalising does not advance `revision` -- only an explicit edit
+    does. Once the draft is genuinely edited to revision 2, finalising
+    revision 2 must create a brand new, distinct StrategyVersion (not be
+    treated as a duplicate of revision 1's)."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+
+        outcome_a = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+        version_a = outcome_a.strategy_version
+        assert version_a is not None
+
+        # Finalisation must never itself have bumped the draft's revision.
+        draft_row = SpecificationDraftRepository(conn).get_row(draft.draft_id)
+        assert int(draft_row["revision"]) == 1
+
+        draft.title = "Simple close-above-level long -- edited"
+        new_revision = SpecificationDraftRepository(conn).update_with_expected_revision(draft.draft_id, 1, draft)
+        assert new_revision == 2
+
+        outcome_b = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=2)
+        version_b = outcome_b.strategy_version
+        assert version_b is not None
+        assert version_b.strategy_version_id != version_a.strategy_version_id
+        assert version_b.title != version_a.title
+
+        rows = SpecificationVersionRepository(conn).list_for_candidate(candidate_id)
+        assert len(rows) == 2
+
+
+def test_conflicting_explicit_strategy_version_id_on_retry_raises_typed_conflict_error(pg_config):
+    """A retry that supplies an EXPLICIT strategy_version_id that
+    disagrees with the one already finalised for this exact draft
+    revision must be refused with a typed conflict error -- never silently
+    accepted, never silently ignored."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+
+    with pytest.raises(SpecificationDraftRevisionAlreadyFinalisedConflictError) as excinfo, connection(
+        pg_config
+    ) as conn:
+        finalise_specification_draft(
+            conn, draft_id=draft.draft_id, expected_revision=1, strategy_version_id=new_id(),
+        )
+    assert excinfo.value.code == "SPECIFICATION_DRAFT_REVISION_ALREADY_FINALISED_CONFLICT"
+
+    with connection(pg_config) as conn:
+        rows = SpecificationVersionRepository(conn).list_for_candidate(candidate_id)
+        assert len(rows) == 1  # the conflicting retry created nothing
+
+
+def test_concurrent_finalisation_of_the_same_draft_revision_creates_exactly_one_strategy_version(pg_config):
+    """The adversarial audit's required proof: two independent DB
+    connections, two real threads, synchronised to start together, both
+    finalising the SAME (draft_id, expected_revision). After both
+    complete: exactly one StrategyVersion, exactly one VALID validation
+    record, both callers agree on the same logical result (or one got the
+    idempotent existing result), the candidate reached SPECIFIED exactly
+    once, the data-requirement projection exists exactly once, and no
+    error/orphaned state is left behind."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+    draft_id = draft.draft_id
+
+    barrier = threading.Barrier(2)
+    results: list = []
+    errors: list = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        barrier.wait(timeout=10)
+        try:
+            with connection(pg_config) as thread_conn:
+                outcome = finalise_specification_draft(
+                    thread_conn, draft_id=draft_id, expected_revision=1
+                )
+            with lock:
+                results.append(outcome)
+        except Exception as exc:  # noqa: BLE001 -- captured for the assertion below, not swallowed
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"unexpected errors from concurrent finalisation: {errors!r}"
+    assert len(results) == 2
+
+    version_ids = {outcome.strategy_version.strategy_version_id for outcome in results}
+    assert len(version_ids) == 1, "both concurrent callers must agree on exactly one StrategyVersion"
+    (strategy_version_id,) = version_ids
+
+    with connection(pg_config) as conn:
+        version_rows = SpecificationVersionRepository(conn).list_for_candidate(candidate_id)
+        assert len(version_rows) == 1
+        assert str(version_rows[0]["id"]) == strategy_version_id
+
+        valid_records = [
+            r for r in ValidationRecordRepository(conn).list_for_draft(draft_id) if r["status"] == "VALID"
+        ]
+        assert len(valid_records) == 1
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT pipeline_stage FROM strategy_candidates WHERE id = %s", (candidate_id,))
+            assert cur.fetchone()["pipeline_stage"] == "SPECIFIED"
+
+        requirement_rows = DataRequirementProjectionRepository(conn).list_for_strategy_version(
+            strategy_version_id
+        )
+        assert len(requirement_rows) == 1  # minimal_valid_draft declares exactly one requirement
+
+
+def test_db_unique_index_backstops_a_missed_application_level_idempotency_check(pg_config, monkeypatch):
+    """Direct proof of the crux of the fix: even when the application-level
+    check-then-act is bypassed/missed (simulated here by monkeypatching the
+    internal lookup helper to miss on its first call, exactly as a genuine
+    race between the check and the INSERT could), migration 0007's partial
+    unique index on strategy_versions(source_draft_id,
+    source_draft_revision) is the real backstop -- the duplicate INSERT
+    fails at the database, and finalise_specification_draft recovers to the
+    pre-existing result instead of raising a surprise integrity error."""
+    import darwin.research_store.specification_finalisation as finalisation_module
+
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+
+        # Simulate "a finalisation for this exact draft/revision already
+        # committed" by inserting the StrategyVersion directly through the
+        # repository -- entirely bypassing finalise_specification_draft's
+        # own idempotency check, exactly the race window the DB constraint
+        # exists to backstop.
+        rogue_version_id = new_id()
+        precomputed = finalise(draft, strategy_version_id=rogue_version_id)
+        assert precomputed.strategy_version is not None
+        SpecificationVersionRepository(conn).create(
+            precomputed.strategy_version, source_draft_id=draft.draft_id, source_draft_revision=1,
+        )
+        DataRequirementProjectionRepository(conn).create_many(
+            rogue_version_id, precomputed.strategy_version.data_requirements
+        )
+        ValidationRecordRepository(conn).create(
+            draft_id=draft.draft_id, draft_revision=1, assessed_at_utc=datetime.now(UTC),
+            status="VALID", findings=[], strategy_version_id=rogue_version_id,
+        )
+
+    real_check = finalisation_module._load_existing_finalisation
+    call_count = {"n": 0}
+
+    def blind_on_first_call(conn, *, draft_id, draft_revision):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return None, None  # simulate the application-level check missing the race
+        return real_check(conn, draft_id=draft_id, draft_revision=draft_revision)
+
+    monkeypatch.setattr(finalisation_module, "_load_existing_finalisation", blind_on_first_call)
+
+    with connection(pg_config) as conn:
+        outcome = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
+
+    assert call_count["n"] == 2  # the blind pre-check, then the post-conflict recovery
+    assert outcome.strategy_version is not None
+    assert outcome.strategy_version.strategy_version_id == rogue_version_id
+
+    with connection(pg_config) as conn:
+        rows = SpecificationVersionRepository(conn).list_for_candidate(candidate_id)
+        assert len(rows) == 1  # never a second row despite the missed application-level check
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM strategy_version_data_requirements WHERE strategy_version_id = %s",
+                (rogue_version_id,),
+            )
+            assert cur.fetchone()["n"] == 1  # the failed insert attempt left no partial data behind
+
+
+# ============================================================================
 # Immutability (item 19 "Immutability" / item 7)
 # ============================================================================
 
@@ -502,7 +732,10 @@ def test_strategy_version_repository_exposes_no_update_or_delete_method():
     repo_methods = {name for name in dir(SpecificationVersionRepository) if not name.startswith("_")}
     assert "update" not in repo_methods
     assert "delete" not in repo_methods
-    assert repo_methods == {"create", "get_row", "get", "list_for_candidate", "list_by_semantic_fingerprint"}
+    assert repo_methods == {
+        "create", "get_row", "get", "list_for_candidate", "list_by_semantic_fingerprint",
+        "get_row_by_draft_and_revision",
+    }
 
 
 def test_db_refuses_raw_update_against_a_finalised_strategy_version(pg_config):
@@ -514,10 +747,21 @@ def test_db_refuses_raw_update_against_a_finalised_strategy_version(pg_config):
         outcome = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
         version_id = outcome.strategy_version.strategy_version_id
 
+    # Two independent reasons this must fail as of the PID-004A
+    # adversarial-audit privilege-separation fix: the immutability trigger
+    # (migration 0006) fires under a role still privileged enough to reach
+    # it (e.g. this file's own shared superuser-equivalent test role), OR
+    # lack of UPDATE privilege fires first under the restricted darwin_app
+    # role (see tests/integration/test_privilege_separation.py, which
+    # proves this exact statement against the real restricted role) --
+    # either is an acceptable proof that the mutation was refused.
     with connection(pg_config) as conn:
-        with pytest.raises(psycopg.errors.RaiseException) as excinfo, conn.cursor() as cur:
+        with pytest.raises(
+            (psycopg.errors.RaiseException, psycopg.errors.InsufficientPrivilege)
+        ) as excinfo, conn.cursor() as cur:
             cur.execute("UPDATE strategy_versions SET title = 'HACKED' WHERE id = %s", (version_id,))
-        assert "immutable" in str(excinfo.value).lower()
+        message = str(excinfo.value).lower()
+        assert "immutable" in message or "permission denied" in message
         conn.rollback()
 
     with connection(pg_config) as conn:
@@ -534,10 +778,16 @@ def test_db_refuses_raw_delete_against_a_finalised_strategy_version(pg_config):
         outcome = finalise_specification_draft(conn, draft_id=draft.draft_id, expected_revision=1)
         version_id = outcome.strategy_version.strategy_version_id
 
+    # See the comment in test_db_refuses_raw_update_against_a_finalised_
+    # strategy_version above -- two independent, equally valid failure
+    # reasons as of the privilege-separation fix.
     with connection(pg_config) as conn:
-        with pytest.raises(psycopg.errors.RaiseException) as excinfo, conn.cursor() as cur:
+        with pytest.raises(
+            (psycopg.errors.RaiseException, psycopg.errors.InsufficientPrivilege)
+        ) as excinfo, conn.cursor() as cur:
             cur.execute("DELETE FROM strategy_versions WHERE id = %s", (version_id,))
-        assert "immutable" in str(excinfo.value).lower()
+        message = str(excinfo.value).lower()
+        assert "immutable" in message or "permission denied" in message
         conn.rollback()
 
     with connection(pg_config) as conn:
@@ -556,15 +806,22 @@ def test_db_refuses_raw_update_and_delete_against_the_data_requirement_projectio
         )
         requirement_row_id = rows[0]["id"]
 
+    # See the comment in test_db_refuses_raw_update_against_a_finalised_
+    # strategy_version above -- two independent, equally valid failure
+    # reasons as of the privilege-separation fix.
     with connection(pg_config) as conn:
-        with pytest.raises(psycopg.errors.RaiseException), conn.cursor() as cur:
+        with pytest.raises(
+            (psycopg.errors.RaiseException, psycopg.errors.InsufficientPrivilege)
+        ), conn.cursor() as cur:
             cur.execute(
                 "UPDATE strategy_version_data_requirements SET display_name = 'HACKED' WHERE id = %s",
                 (requirement_row_id,),
             )
         conn.rollback()
     with connection(pg_config) as conn:
-        with pytest.raises(psycopg.errors.RaiseException), conn.cursor() as cur:
+        with pytest.raises(
+            (psycopg.errors.RaiseException, psycopg.errors.InsufficientPrivilege)
+        ), conn.cursor() as cur:
             cur.execute("DELETE FROM strategy_version_data_requirements WHERE id = %s", (requirement_row_id,))
         conn.rollback()
 
