@@ -82,6 +82,14 @@ services:
       DARWIN_LOG_LEVEL: ${DARWIN_LOG_LEVEL:-INFO}
     secrets:
       - darwin_ro_credential
+    volumes:
+      # PID-004B Workshop authoring workspaces (darwin.workshop.workspace)
+      # -- a non-canonical, best-effort authoring surface (canonical truth
+      # is always Postgres; see the Workspace-loss E2E proof), but there is
+      # no reason to let it evaporate on every container replacement when
+      # a durable volume is this cheap. See Dockerfile for why the
+      # directory is writable by the `darwin` user at all.
+      - darwin_workspaces:/srv/DARWIN/workspaces
     ports:
       - "${DARWIN_CORE_PORT:-8000}:8000"
     networks:
@@ -143,3 +151,4 @@ networks:
 
 volumes:
   darwin_sql_data: {}
+  darwin_workspaces: {}

@@ -779,6 +779,30 @@ def test_repository_rejects_non_positive_source_draft_revision(pg_config, bad_re
             )
 
 
+@pytest.mark.parametrize("bad_revision", [True, False, 1.5, "1", "abc", [1], {"n": 1}])
+def test_repository_rejects_non_integer_source_draft_revision(pg_config, bad_revision):
+    """Closes GitHub issue #8 (PID004A_PRE_API_HARDENING), now blocking
+    with PID-004B's external/API authoring boundary: `bool` (a subclass
+    of `int` in Python), `float`, `str`, and other non-int types must all
+    be rejected explicitly by the repository guard itself -- never left
+    to raise an unrelated TypeError from the `<= 0` comparison (str), and
+    never silently coerced/truncated by the database driver/column
+    (float, bool)."""
+    with connection(pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        draft = minimal_valid_draft()
+        _house_under_real_candidate(conn, draft, candidate_id=candidate_id)
+        _persist_draft(conn, draft)
+        precomputed = finalise(draft, strategy_version_id=new_id())
+        assert precomputed.strategy_version is not None
+        with pytest.raises(InconsistentDraftOriginError):
+            SpecificationVersionRepository(conn).create(
+                precomputed.strategy_version,
+                source_draft_id=draft.draft_id,
+                source_draft_revision=bad_revision,
+            )
+
+
 def test_raw_sql_insert_with_draft_id_and_no_revision_is_rejected_by_db_constraint_directly(pg_config):
     """Bypasses the repository guard entirely (raw SQL, no
     SpecificationVersionRepository involved) -- proves migration 0008's

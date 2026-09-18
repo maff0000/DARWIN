@@ -53,6 +53,8 @@ from darwin.research_store.specification_repositories import (
     SpecificationVersionRepository,
     ValidationRecordRepository,
 )
+from darwin.specification.provenance import RuleOrigin
+from darwin.workshop.domain import QuestionStatus
 from tests.fixtures.specification_drafts import minimal_valid_draft
 
 pytestmark = pytest.mark.integration
@@ -317,6 +319,154 @@ def test_delete_against_a_finalised_strategy_version_fails_through_the_restricte
 
     with connection(app_pg_config) as conn:
         assert SpecificationVersionRepository(conn).get_row(version_id) is not None
+
+
+def _new_workshop(conn, candidate_id: str) -> str:
+    from darwin.workshop import service as workshop_service
+
+    return workshop_service.open_workshop(conn, candidate_id=candidate_id).workshop_id
+
+
+# ============================================================================
+# PID-004B Strategy Workshop (migration 0009) -- same restricted-role proof
+# extended to the new tables.
+# ============================================================================
+
+
+def test_workshop_ordinary_lifecycle_succeeds_through_the_restricted_app_role(app_pg_config):
+    from darwin.specification.serialization import serialize_specification_draft
+    from darwin.workshop import service as workshop_service
+    from tests.fixtures.specification_drafts import minimal_valid_draft
+
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        workshop_id = _new_workshop(conn, candidate_id)
+        question = workshop_service.create_question(
+            conn, workshop_id, semantic_subject="x", question_text="y?"
+        )
+        decision = workshop_service.create_decision(
+            conn, workshop_id, proposed_value={"a": 1}, origin=RuleOrigin.SOURCE_RULE, actor="matt",
+        )
+        workshop_service.accept_decision(conn, workshop_id, decision.decision_id)
+        workshop_service.resolve_question(
+            conn, workshop_id, question.question_id, resolution=QuestionStatus.RESOLVED,
+            accepted_decision_id=decision.decision_id,
+        )
+        _draft, revision = workshop_service.update_draft(
+            conn, workshop_id, expected_revision=0,
+            draft_document=serialize_specification_draft(minimal_valid_draft(candidate_id=candidate_id)),
+        )
+        outcome = workshop_service.finalise_workshop(conn, workshop_id, expected_revision=revision)
+        assert outcome.strategy_version is not None
+        workshop_after = workshop_service.get_workshop(conn, workshop_id)
+        assert workshop_after.status.value == "FINALISED"
+
+
+def test_truncate_workshop_decisions_is_refused(app_pg_config):
+    with connection(app_pg_config) as conn:
+        message = _expect_rejected(conn, psycopg.errors.InsufficientPrivilege, "TRUNCATE workshop_decisions")
+    _assert_denied(message)
+
+
+def test_delete_workshop_decisions_row_is_refused_for_two_independent_reasons(app_pg_config):
+    """No DELETE privilege at all (this fix) AND migration 0009's own
+    trg_workshop_decisions_content_immutable trigger both refuse a DELETE
+    -- this test only asserts that it fails, either failure mode is a
+    pass (Postgres checks privilege first in practice)."""
+    from darwin.workshop import service as workshop_service
+
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        workshop_id = _new_workshop(conn, candidate_id)
+        decision = workshop_service.create_decision(
+            conn, workshop_id, proposed_value={"a": 1}, origin=RuleOrigin.SOURCE_RULE, actor="matt",
+        )
+
+    with connection(app_pg_config) as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM workshop_decisions WHERE id = %s", (decision.decision_id,))
+        except (psycopg.errors.InsufficientPrivilege, psycopg.errors.RaiseException) as exc:
+            conn.rollback()
+            message = str(exc).lower()
+            assert "permission denied" in message or "append-only" in message
+        else:
+            conn.rollback()
+            pytest.fail("expected DELETE against workshop_decisions to fail")
+
+
+def test_delete_workshop_questions_row_is_refused(app_pg_config):
+    from darwin.workshop import service as workshop_service
+
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        workshop_id = _new_workshop(conn, candidate_id)
+        question = workshop_service.create_question(
+            conn, workshop_id, semantic_subject="x", question_text="y?"
+        )
+
+    with connection(app_pg_config) as conn:
+        message = _expect_rejected(
+            conn, psycopg.errors.InsufficientPrivilege,
+            "DELETE FROM workshop_questions WHERE id = %s", (question.question_id,),
+        )
+    _assert_denied(message)
+
+
+def test_delete_strategy_workshops_row_is_refused(app_pg_config):
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        workshop_id = _new_workshop(conn, candidate_id)
+
+    with connection(app_pg_config) as conn:
+        message = _expect_rejected(
+            conn, psycopg.errors.InsufficientPrivilege,
+            "DELETE FROM strategy_workshops WHERE id = %s", (workshop_id,),
+        )
+    _assert_denied(message)
+
+
+def test_delete_strategy_workshop_discovery_link_is_refused(app_pg_config):
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        discovery_id = _new_discovery(conn)
+        workshop_id = _new_workshop_with_discovery(conn, candidate_id, discovery_id)
+
+    with connection(app_pg_config) as conn:
+        message = _expect_rejected(
+            conn, psycopg.errors.InsufficientPrivilege,
+            "DELETE FROM strategy_workshop_discovery_links WHERE workshop_id = %s", (workshop_id,),
+        )
+    _assert_denied(message)
+
+
+def test_update_strategy_workshop_discovery_link_is_refused(app_pg_config):
+    with connection(app_pg_config) as conn:
+        candidate_id = _new_candidate(conn)
+        discovery_id = _new_discovery(conn)
+        workshop_id = _new_workshop_with_discovery(conn, candidate_id, discovery_id)
+
+    with connection(app_pg_config) as conn:
+        message = _expect_rejected(
+            conn, psycopg.errors.InsufficientPrivilege,
+            "UPDATE strategy_workshop_discovery_links SET discovery_id = discovery_id WHERE workshop_id = %s",
+            (workshop_id,),
+        )
+    _assert_denied(message)
+
+
+def _new_discovery(conn) -> str:
+    from tests.fixtures.workshops import new_user_discovered_discovery
+
+    return new_user_discovered_discovery(conn)
+
+
+def _new_workshop_with_discovery(conn, candidate_id: str, discovery_id: str) -> str:
+    from darwin.workshop import service as workshop_service
+
+    return workshop_service.open_workshop(
+        conn, candidate_id=candidate_id, discovery_ids=(discovery_id,)
+    ).workshop_id
 
 
 def test_mutation_of_the_data_requirement_projection_fails_through_the_restricted_role(app_pg_config):

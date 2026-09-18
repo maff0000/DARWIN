@@ -173,6 +173,40 @@ DO $$ BEGIN IF to_regclass('public.schema_migrations') IS NOT NULL THEN
     GRANT SELECT ON TABLE schema_migrations TO darwin_app;
 END IF; END $$;
 
+-- --- PID-004B Strategy Workshop (migration 0009) -----------------------
+-- strategy_workshops/workshop_questions: the application legitimately
+--   mutates these in place (status transitions, current_draft_id,
+--   finalised_strategy_version_id, question resolve/withdraw) -- UPDATE is
+--   granted, DELETE is not (Workshops/questions are durable history, never
+--   deleted -- PID-004B: "FINALISED/ABANDONED Workshops remain durable
+--   history").
+-- workshop_decisions: append-only (PID-004B) -- UPDATE is granted ONLY
+--   because acceptance_state/superseded_by_decision_id legitimately change
+--   post-insert (the cross-reference bookkeeping a supersession performs);
+--   migration 0009's own `trg_workshop_decisions_content_immutable`
+--   trigger is the real backstop against a rewrite of substantive content
+--   even though UPDATE privilege is granted -- same defence-in-depth shape
+--   as strategy_versions' immutability trigger, just with a narrower
+--   trigger (some columns updatable) rather than a blanket reject. No
+--   DELETE anywhere.
+-- strategy_workshop_discovery_links: append-only many-to-many -- SELECT +
+--   INSERT only, same as strategy_candidate_discovery_links above.
+DO $$ BEGIN IF to_regclass('public.strategy_workshops') IS NOT NULL THEN
+    GRANT SELECT, INSERT, UPDATE ON TABLE strategy_workshops TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.strategy_workshop_discovery_links') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE strategy_workshop_discovery_links TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.workshop_questions') IS NOT NULL THEN
+    GRANT SELECT, INSERT, UPDATE ON TABLE workshop_questions TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.workshop_decisions') IS NOT NULL THEN
+    GRANT SELECT, INSERT, UPDATE ON TABLE workshop_decisions TO darwin_app;
+END IF; END $$;
+
 -- No sequence grants: every primary key in this schema is an
 -- application-generated UUID (darwin.core.identities.new_id()) or a
 -- plain TEXT natural key (schema_migrations.version) -- there is no

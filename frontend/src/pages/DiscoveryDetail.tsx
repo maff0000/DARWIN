@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { useNavigate, useParams } from "react-router-dom";
+import { ApiError, api } from "../api/client";
 import { ALLOWED_INTAKE_TRANSITIONS, INTAKE_STATUS_LABEL } from "../api/intakeTransitions";
 import { useApi } from "../api/useApi";
 import type { IntakeStatus } from "../api/types";
@@ -225,19 +225,57 @@ export function DiscoveryDetail() {
 
       <IntakeControls discoveryId={d.id} current={d.intake_status} auditHistory={intake_audit_history} onChanged={detail.reload} />
 
-      <section className="panel workshop-panel" style={{ margin: "var(--space-5) 0" }}>
-        <h2 className="panel-heading">Strategy Workshop</h2>
-        <div style={{ padding: "var(--space-4)" }}>
-          <button type="button" className="button" disabled title="Strategy Workshop is not yet available (PID-004)">
-            Open Workshop
-          </button>
-          <p style={{ marginTop: "var(--space-2)", color: "var(--ink-faint)", fontSize: 12.5 }}>
-            Strategy Workshop is not yet available (PID-004). This button is intentionally inert — it does not
-            invoke Claude Code, create a session, generate rules, or produce a StrategyVersion.
-          </p>
-        </div>
-      </section>
+      <OpenWorkshopPanel discoveryId={d.id} title={d.title} />
     </div>
+  );
+}
+
+function OpenWorkshopPanel({ discoveryId, title }: { discoveryId: string; title: string }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Open Workshop is a real, deliberate action against the real backend
+  // (PID-004B directive) -- never a client-constructed Workshop. Idempotent
+  // per discovery: POST /api/v1/candidates resolves to the SAME candidate
+  // on a repeat click (migration 0010's own partial unique index), and
+  // POST /api/v1/workshops is itself idempotent per candidate_id -- so a
+  // second "Open Workshop" click (or a reload before navigation completed)
+  // always lands on the SAME Workshop, never a duplicate.
+  async function openWorkshop() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { candidate } = await api.openCandidate({ title, origin_discovery_id: discoveryId });
+      const { workshop } = await api.openWorkshop({
+        candidate_id: candidate.candidate_id,
+        discovery_ids: [discoveryId],
+      });
+      navigate(`/workshops/${workshop.workshop_id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not open the Strategy Workshop.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel workshop-panel" style={{ margin: "var(--space-5) 0" }}>
+      <h2 className="panel-heading">Strategy Workshop</h2>
+      <div style={{ padding: "var(--space-4)" }}>
+        <button type="button" className="button" onClick={openWorkshop} disabled={busy}>
+          {busy ? "Opening…" : "Open Workshop"}
+        </button>
+        <p style={{ marginTop: "var(--space-2)", color: "var(--ink-faint)", fontSize: 12.5 }}>
+          Opens (or resumes) a real Strategy Workshop against this discovery — a human authoring surface only.
+          This never invokes an AI agent, generates rules automatically, or produces a StrategyVersion by itself.
+        </p>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

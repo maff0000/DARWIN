@@ -18,6 +18,7 @@ from darwin.core.build import build_info
 from darwin.core.config import DarwinConfig
 from darwin.core.errors import DarwinError, NotReadyError, to_error_response
 from darwin.core.health import ComponentHealth, ComponentStatus, ReadinessReport
+from darwin.core.identities import new_id
 from darwin.core.logging import configure_logging
 from darwin.hermes.instrument_definition import (
     UnknownInstrumentDefinitionError,
@@ -27,6 +28,7 @@ from darwin.hermes.instrument_definition import (
 from darwin.hermes.reader import check_hermes_reachable
 from darwin.research_store.db import check_postgres_reachable, connection
 from darwin.research_store.migrations import migration_state
+from darwin.research_store.models import StrategyCandidate
 from darwin.research_store.repositories import (
     MarketDatasetRepository,
     ResearchRunRepository,
@@ -38,10 +40,15 @@ from darwin.research_store.repositories import (
     StrategyCandidateRepository,
     StrategyVersionRepository,
 )
+from darwin.research_store.specification_repositories import (
+    SpecificationVersionRepository,
+)
 from darwin.scout import service as scout_service
 from darwin.scout.domain import IntakeStatus, OriginKind
 from darwin.scout.service import MAX_RECORDS_PER_RUN, ScoutRequestError
 from darwin.scout.trader_dev_adapter import ALLOWED_SORTS as SCOUT_ALLOWED_SORTS
+from darwin.specification.serialization import deserialize_strategy_version
+from darwin.workshop.api import register_workshop_routes
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +109,21 @@ class ScoutIntakeStatusRequest(BaseModel):
     target_status: IntakeStatus
     changed_by: str = Field(min_length=1)
     reason: str | None = None
+
+
+class CandidateOpenRequest(BaseModel):
+    """PID-004B Workshop UI enablement (genuine backend gap found while
+    building ARENA's Workshop page -- see migration 0010's own docstring):
+    there was no endpoint anywhere capable of creating a StrategyCandidate.
+    Idempotent per `origin_discovery_id` when one is given (mirrors
+    `/api/v1/workshops`'s own idempotent-per-candidate open) -- a repeated
+    call for the SAME discovery always resolves to the same candidate,
+    never a duplicate. `origin_discovery_id=None` creates a bare candidate
+    with no discovery origin (PID-004 sec4.2 permits this; never idempotent
+    in that case, since there is nothing to key idempotency on)."""
+
+    title: str = Field(min_length=1)
+    origin_discovery_id: str | None = None
 
 
 def create_app(config: DarwinConfig | None = None) -> FastAPI:
@@ -333,6 +355,77 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
             )
         return {"discovery": updated}
 
+    # --- PID-004B Workshop UI enablement: StrategyCandidate creation -------
+    # Genuine backend gap (migration 0010's own docstring): no endpoint
+    # anywhere could create a strategy_candidates row, which ARENA's "Open
+    # Workshop" action (PID-004B directive) needs before it can call
+    # POST /api/v1/workshops at all. Deliberately narrow -- one create
+    # (idempotent per discovery), one read -- never a generic candidate
+    # PATCH/update surface.
+
+    @app.post("/api/v1/candidates")
+    def open_candidate_endpoint(body: CandidateOpenRequest) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            if body.origin_discovery_id is not None:
+                if ScoutDiscoveryRepository(conn).get(body.origin_discovery_id) is None:
+                    raise HTTPException(status_code=404, detail="discovery not found")
+                row, created = StrategyCandidateRepository(conn).get_or_create_for_discovery(
+                    body.origin_discovery_id, body.title
+                )
+            else:
+                candidate_id = new_id()
+                StrategyCandidateRepository(conn).create(StrategyCandidate(id=candidate_id, title=body.title))
+                row = StrategyCandidateRepository(conn).get_row(candidate_id)
+                created = True
+        return {"candidate": _candidate_dict(row), "created": created}
+
+    @app.get("/api/v1/candidates/{candidate_id}")
+    def get_candidate_endpoint(candidate_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            row = StrategyCandidateRepository(conn).get_row(candidate_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        return {"candidate": _candidate_dict(row)}
+
+    # --- Workshop UI enablement: a minimal StrategyVersion read ------------
+    # Genuine gap: PID-004A's SpecificationVersionRepository already
+    # persists the immutable StrategyVersion in full (including both
+    # fingerprints), but nothing anywhere exposed it over HTTP -- the
+    # Workshop finalise response only ever returned the bare
+    # strategy_version_id (darwin/workshop/api.py), never enough for
+    # ARENA's post-finalisation panel (PID-004B directive: "semantic
+    # fingerprint ... fingerprint displayed") to show the fingerprint.
+    # Deliberately narrow: one read, the minimal identity/fingerprint
+    # fields -- never the full composition/parameter payload (which
+    # already round-trips through the Workshop draft endpoints).
+
+    @app.get("/api/v1/strategy-versions/{strategy_version_id}")
+    def get_strategy_version_endpoint(strategy_version_id: str) -> dict:
+        _ensure_ready_for_data(_readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            row = SpecificationVersionRepository(conn).get_row(strategy_version_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="strategy version not found")
+        version = deserialize_strategy_version(row["full_payload"])
+        return {
+            "strategy_version_id": version.strategy_version_id,
+            "candidate_id": version.candidate_id,
+            "title": version.title,
+            "thesis": version.thesis,
+            "semantic_fingerprint": version.semantic_fingerprint,
+            "artifact_record_fingerprint": version.artifact_record_fingerprint,
+            "finalised_at_utc": version.finalised_at_utc,
+            "version_label": row.get("version_label"),
+        }
+
+    # --- PID-004B Strategy Workshop (docs/pids/PID-004-SPECIFICATION-WORKSHOP.md
+    # sec45-sec56) -- routes live in darwin.workshop.api, kept out of this file
+    # to avoid unbounded growth; wired the same way SCOUT's routes are (same
+    # FastAPI app/process, not a separate service -- PID-004 sec53).
+    register_workshop_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
+
     _mount_arena(app)
 
     return app
@@ -366,6 +459,18 @@ def _mount_arena(app: FastAPI) -> None:
         if not index_path.is_file():
             raise HTTPException(status_code=404, detail="ARENA bundle not built")
         return FileResponse(index_path)
+
+
+def _candidate_dict(row: dict) -> dict:
+    return {
+        "candidate_id": str(row["id"]),
+        "title": row["title"],
+        "pipeline_stage": row["pipeline_stage"],
+        "source_strategy_id": str(row["source_strategy_id"]) if row.get("source_strategy_id") else None,
+        "origin_discovery_id": str(row["origin_discovery_id"]) if row.get("origin_discovery_id") else None,
+        "created_at_utc": row.get("created_at_utc"),
+        "updated_at_utc": row.get("updated_at_utc"),
+    }
 
 
 def _instrument_definition_dict(d) -> dict:

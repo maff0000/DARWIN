@@ -57,6 +57,14 @@ class StrategyCandidateRepository:
         self._conn = conn
 
     def create(self, c: StrategyCandidate) -> None:
+        # Deliberately untouched from before migration 0010: every existing
+        # call site (unit/contract/integration test fixtures included, some
+        # of which exercise the 0001-0009 upgrade path against a database
+        # that does NOT yet have the origin_discovery_id column at all)
+        # passes `origin_discovery_id=None`. The only path that ever sets a
+        # real one is `get_or_create_for_discovery` below, which has its
+        # own dedicated INSERT -- so this method never needs to name that
+        # column, and stays valid against pre-0010 schemas too.
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -66,6 +74,54 @@ class StrategyCandidateRepository:
                 """,
                 (c.id, c.source_strategy_id, c.title, c.pipeline_stage.value),
             )
+
+    def get_row(self, candidate_id: str) -> dict | None:
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT * FROM strategy_candidates WHERE id = %s", (candidate_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_or_create_for_discovery(self, origin_discovery_id: str, title: str) -> tuple[dict, bool]:
+        """Idempotent get-or-create per SCOUT discovery (PID-004B Workshop
+        UI enablement, migration 0010) -- mirrors
+        `darwin.research_store.workshop_repositories.WorkshopRepository.open`'s
+        own `ON CONFLICT ... DO NOTHING RETURNING *` idiom exactly, so a
+        repeated "Open Workshop" click against the same discovery (e.g. a
+        page reload before navigation completed) resolves to the SAME
+        StrategyCandidate row rather than creating a second one -- the
+        partial unique index `uq_strategy_candidates_origin_discovery`
+        (migration 0010) is the real, structural backstop; this method
+        recovers from a concurrent racer the same way `WorkshopRepository.
+        open` does.
+
+        Returns `(row, created)` -- `created=False` means a candidate
+        already existed for this discovery (pure, side-effect-free
+        idempotent return, never a second candidate)."""
+        candidate_id = new_id()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO strategy_candidates (id, title, origin_discovery_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (origin_discovery_id) WHERE origin_discovery_id IS NOT NULL DO NOTHING
+                RETURNING *
+                """,
+                (candidate_id, title, origin_discovery_id),
+            )
+            row = cur.fetchone()
+        if row is not None:
+            return dict(row), True
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM strategy_candidates WHERE origin_discovery_id = %s", (origin_discovery_id,)
+            )
+            existing = cur.fetchone()
+        if existing is None:  # pragma: no cover - structurally impossible, mirrors WorkshopRepository.open
+            raise RuntimeError(
+                f"strategy_candidates get_or_create_for_discovery conflicted for "
+                f"origin_discovery_id={origin_discovery_id!r} but no existing row could be found"
+            )
+        return dict(existing), False
 
     def counts_by_stage(self) -> dict[str, int]:
         counts = {stage.value: 0 for stage in PipelineStage}
