@@ -312,3 +312,28 @@ def register_workshop_routes(
             "candidate_advanced": outcome.candidate_advanced,
             "workshop": _workshop_dict(workshop),
         }
+
+    # --- readiness (Workshop UI enablement -- see darwin.workshop.service's
+    # own module comment for why this exists: PID-004A's
+    # DataReadinessAssessment/DataReadinessAssessmentRepository already
+    # existed but had no HTTP surface at all before this) -------------------
+
+    @app.get("/api/v1/workshops/{workshop_id}/readiness")
+    def get_workshop_readiness_endpoint(workshop_id: str) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                result = service.get_readiness(conn, workshop_id)
+            except WorkshopNotFoundError as exc:
+                raise _not_found(exc) from exc
+        return {"readiness": result}
+
+    @app.post("/api/v1/workshops/{workshop_id}/readiness/assess")
+    def assess_workshop_readiness_endpoint(workshop_id: str) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                result = service.assess_workshop_readiness(conn, workshop_id)
+            except WorkshopNotFoundError as exc:
+                raise _not_found(exc) from exc
+        return {"readiness": result}

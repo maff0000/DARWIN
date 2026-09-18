@@ -24,12 +24,15 @@ from datetime import UTC, datetime
 import psycopg
 
 from darwin.core.identities import new_id
+from darwin.research_store.repositories import MarketDatasetRepository
 from darwin.research_store.specification_finalisation import (
     FinalisationOutcome,
     finalise_specification_draft,
 )
 from darwin.research_store.specification_repositories import (
+    DataReadinessAssessmentRepository,
     SpecificationDraftRepository,
+    SpecificationVersionRepository,
 )
 from darwin.research_store.workshop_repositories import (
     WorkshopDecisionRepository,
@@ -42,9 +45,17 @@ from darwin.research_store.workshop_repositories import (
     question_row_to_domain,
     workshop_row_to_domain,
 )
+from darwin.specification.data_requirements import (
+    DataAuthorityClass,
+    HistoricalDepthUnit,
+)
 from darwin.specification.domain import SpecificationDraft
 from darwin.specification.provenance import RuleOrigin
-from darwin.specification.serialization import deserialize_specification_draft
+from darwin.specification.readiness import PerRequirementAvailability, assess_readiness
+from darwin.specification.serialization import (
+    deserialize_specification_draft,
+    deserialize_strategy_version,
+)
 from darwin.specification.validation import ValidationOutcome, validate_draft
 from darwin.workshop import workspace
 from darwin.workshop.domain import (
@@ -389,3 +400,122 @@ def finalise_workshop(
         WorkshopRepository(conn).mark_finalised(workshop_id, outcome.strategy_version.strategy_version_id)
     _sync_workspace_best_effort(conn, workshop_id)
     return outcome
+
+
+# --- readiness (PID-004 sec26-sec28; Workshop UI enablement) -----------------
+#
+# Genuine gap found while building ARENA's Workshop Readiness panel: PID-004A
+# already defines `DataReadinessAssessment`/`DataReadinessAssessmentRepository`
+# in full (`darwin.specification.readiness` / `.research_store.
+# specification_repositories`), but nothing anywhere -- not PID-004B's own
+# workshop routes, not `darwin.app` -- ever exposed them over HTTP or ever
+# called `assess_readiness` outside tests/fixtures. Deliberately narrow: one
+# read (what is the latest assessment, if any), one deliberate write action
+# (assess now) -- never automatic, never run inside finalise_workshop's own
+# transaction (mirrors `darwin.research_store.specification_finalisation`'s
+# own documented separation: "readiness is assessed afterwards,
+# separately").
+
+
+def get_readiness(conn: psycopg.Connection, workshop_id: str) -> dict:
+    """The latest `DataReadinessAssessment` for this Workshop's finalised
+    StrategyVersion, or an honest `UNASSESSED` state -- never fabricated.
+    `UNASSESSED` is the correct, structural answer (not a placeholder) for
+    every ACTIVE Workshop: `DataReadinessAssessment` is defined against a
+    `strategy_version_id` only (PID-004 sec26), and no StrategyVersion
+    exists before finalisation."""
+    workshop = get_workshop(conn, workshop_id)
+    if workshop.finalised_strategy_version_id is None:
+        return {"state": "UNASSESSED", "assessed_at_utc": None, "requirements": ()}
+    assessment_repo = DataReadinessAssessmentRepository(conn)
+    assessments = assessment_repo.list_for_strategy_version(workshop.finalised_strategy_version_id)
+    if not assessments:
+        return {"state": "UNASSESSED", "assessed_at_utc": None, "requirements": ()}
+    latest = assessments[-1]  # list_for_strategy_version orders oldest-first; last is most recent
+    per_requirement = assessment_repo.list_per_requirement(str(latest["id"]))
+    return {
+        "state": latest["overall_state"],
+        "assessed_at_utc": latest["assessed_at_utc"],
+        "requirements": tuple(
+            {
+                "requirement_id": r["requirement_id"],
+                "availability": r["availability"],
+                "reason": r.get("reason"),
+            }
+            for r in per_requirement
+        ),
+    }
+
+
+def assess_workshop_readiness(conn: psycopg.Connection, workshop_id: str) -> dict:
+    """Deliberate, explicit readiness assessment against a FINALISED
+    Workshop's StrategyVersion -- a human-triggered action, never automatic.
+    Genuinely computed from real DARWIN state, never fabricated for
+    display:
+
+    * a `HERMES_CANONICAL_MARKET` requirement is AVAILABLE if a real
+      `MarketDataset` row exists for one of the requirement's applicable
+      instruments, at its timeframe, with at least its required historical
+      depth (bar count) -- else UNAVAILABLE with the honest reason.
+    * any OTHER `authority_class` (e.g. `OPTIONS_AUTHORITY`) is
+      `AUTHORITY_NOT_ONBOARDED` -- truthfully: this DARWIN build has no
+      data-authority integration for anything beyond HERMES's own
+      canonical market data today.
+
+    Writes one new, append-only `DataReadinessAssessment` (PID-004
+    sec27/sec28: "reassess readiness, not rediscover/rewrite" -- never
+    updates a prior assessment in place) and returns `get_readiness`'s own
+    dict shape."""
+    workshop = get_workshop(conn, workshop_id)
+    if workshop.finalised_strategy_version_id is None:
+        raise WorkshopHasNoDraftError(
+            f"Workshop {workshop_id!r} has no finalised StrategyVersion to assess readiness against yet"
+        )
+    version_row = SpecificationVersionRepository(conn).get_row(workshop.finalised_strategy_version_id)
+    version = deserialize_strategy_version(version_row["full_payload"])
+    dataset_repo = MarketDatasetRepository(conn)
+    datasets = dataset_repo.list(limit=500)
+
+    per_requirement: dict[str, tuple[PerRequirementAvailability, str | None]] = {}
+    for requirement in version.data_requirements:
+        if requirement.authority_class != DataAuthorityClass.HERMES_CANONICAL_MARKET:
+            per_requirement[requirement.requirement_id] = (
+                PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED,
+                (
+                    f"no data authority integration exists for {requirement.authority_class.value} "
+                    f"in this DARWIN build"
+                ),
+            )
+            continue
+        depth = requirement.required_historical_depth
+        available = False
+        for dataset in datasets:
+            if dataset["instrument"] not in requirement.instrument_applicability:
+                continue
+            if requirement.timeframe is not None and dataset["timeframe"] != requirement.timeframe.code:
+                continue
+            if depth.unit == HistoricalDepthUnit.BARS and int(dataset["record_count"]) < depth.count:
+                continue
+            available = True
+            break
+        if available:
+            per_requirement[requirement.requirement_id] = (PerRequirementAvailability.AVAILABLE, None)
+        else:
+            per_requirement[requirement.requirement_id] = (
+                PerRequirementAvailability.UNAVAILABLE,
+                (
+                    f"no MarketDataset found covering {list(requirement.instrument_applicability)} at "
+                    f"{requirement.timeframe.code if requirement.timeframe else 'any timeframe'} with "
+                    f"sufficient depth"
+                ),
+            )
+
+    assessment = assess_readiness(
+        assessment_id=new_id(),
+        strategy_version_id=version.strategy_version_id,
+        mandatory_requirement_ids={r.requirement_id for r in version.data_requirements if r.mandatory},
+        per_requirement=per_requirement,
+        assessed_at_utc=datetime.now(UTC),
+    )
+    DataReadinessAssessmentRepository(conn).create(assessment)
+    return get_readiness(conn, workshop_id)
