@@ -1208,3 +1208,143 @@
 .workshop-finalised-panel .kv-list {
   padding: 0 0 var(--space-3);
 }
+
+
+/* ---------- PID-004C MENDEL panel ---------- */
+/* Category A/B (QUESTION/ADVISORY, never mutate the draft) vs category C
+   (DRAFT_MUTATING, always creates a new draft revision) get genuinely
+   distinct panel treatment -- a left accent bar + a full banner line,
+   never just a status-chip colour difference (PID-004C sec13.1). */
+.mendel-proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.mendel-proposal-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel-raised);
+}
+.mendel-proposal-card--category-question {
+  border-left-color: var(--evi-plutus);
+}
+.mendel-proposal-card--category-advisory {
+  border-left-color: var(--evi-athena);
+}
+.mendel-proposal-card--category-draft_mutating {
+  border-left-color: var(--down);
+}
+.mendel-proposal-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+.mendel-mutation-banner {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-3);
+}
+.mendel-proposal-card--category-question .mendel-mutation-banner,
+.mendel-proposal-card--category-advisory .mendel-mutation-banner {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.mendel-proposal-card--category-draft_mutating .mendel-mutation-banner {
+  color: var(--down);
+  background: var(--down-bg);
+}
+.mendel-hypothesis-warning {
+  color: var(--down);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.mendel-reasoning-summary {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+  background: var(--panel-raised);
+}
+.mendel-reasoning-summary__text {
+  color: var(--ink-dim);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.mendel-invoke-form {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--panel-raised);
+}
+
+.workshop-badge--mendel-category-question {
+  color: var(--evi-plutus);
+  background: var(--evi-plutus-bg);
+}
+.workshop-badge--mendel-category-advisory {
+  color: var(--evi-athena);
+  background: var(--evi-athena-bg);
+}
+.workshop-badge--mendel-category-draft_mutating {
+  color: var(--down);
+  background: var(--down-bg);
+}
+
+.workshop-badge--mendel-status-proposed {
+  color: var(--signal-ink);
+  background: var(--signal-dim);
+}
+.workshop-badge--mendel-status-accepted {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--mendel-status-rejected {
+  color: var(--ink-faint);
+  background: var(--panel-raised);
+}
+.workshop-badge--mendel-status-stale {
+  color: var(--degraded);
+  background: var(--degraded-bg);
+}
+
+.workshop-badge--mendel-run-running {
+  color: var(--signal-ink);
+  background: var(--signal-dim);
+}
+.workshop-badge--mendel-run-succeeded {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--mendel-run-failed,
+.workshop-badge--mendel-run-timeout {
+  color: var(--down);
+  background: var(--down-bg);
+}
+
+
+/* PID-004C DraftCapabilityView's own DataNeedAvailability values (distinct
+   enum from PerRequirementAvailability above -- different string values,
+   so these never collide with the readiness badges' own selectors). */
+.workshop-badge--availability-supported-and-available {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.workshop-badge--availability-supported-but-not-available {
+  color: var(--degraded);
+  background: var(--degraded-bg);
+}
+.workshop-badge--availability-unsupported-or-authority-missing {
+  color: var(--down);
+  background: var(--down-bg);
+}

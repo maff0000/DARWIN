@@ -144,6 +144,20 @@ class DarwinConfig:
     #: `repr=False` so it can never appear in a logged/printed `DarwinConfig`,
     #: mirroring `PostgresConfig.password`/`HermesConfig.password` above.
     mendel_provider_api_key: str | None = field(default=None, repr=False)
+    #: PID-004C WP3 -- an explicit, narrow, OFF-BY-DEFAULT test-only escape
+    #: hatch: `DARWIN_MENDEL_E2E_FIXTURE_ADAPTER=1` makes
+    #: `darwin.workshop.api.register_mendel_routes`'s adapter-selection DI
+    #: point wire a `DeterministicTestMendelAdapter` pre-loaded with a
+    #: small, fixed, illustrative proposal set instead of the bare
+    #: (zero-proposal) default -- WITHOUT requiring a caller-supplied
+    #: `adapter=` at construction time. This exists ONLY so a real browser
+    #: (Playwright, against a real running darwin_core container) can
+    #: exercise a genuine MENDEL invocation -> proposal render -> accept/
+    #: reject/stale round trip end to end, since a browser cannot inject a
+    #: Python test double directly. Never set in production; a real
+    #: deployment never sets this var, so this field defaults to `False`
+    #: and changes nothing about existing behaviour.
+    mendel_e2e_fixture_adapter_enabled: bool = False
 
     @staticmethod
     def load() -> DarwinConfig:
@@ -170,7 +184,11 @@ class DarwinConfig:
         )
         log_level = os.environ.get("DARWIN_LOG_LEVEL", "INFO").upper()
         mendel_provider_api_key = resolve_mendel_provider_api_key()
+        mendel_e2e_fixture_adapter_enabled = (
+            os.environ.get("DARWIN_MENDEL_E2E_FIXTURE_ADAPTER", "").strip() == "1"
+        )
         return DarwinConfig(
             postgres=postgres, hermes=hermes, build=build, log_level=log_level,
             mendel_provider_api_key=mendel_provider_api_key,
+            mendel_e2e_fixture_adapter_enabled=mendel_e2e_fixture_adapter_enabled,
         )

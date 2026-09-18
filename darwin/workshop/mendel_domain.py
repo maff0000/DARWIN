@@ -182,6 +182,20 @@ class MendelRun:
     started_at_utc: datetime
     completed_at_utc: datetime | None = None
     error_classification: str | None = None
+    #: PID-004C sec13/sec13.1's "bounded reasoning summary" for the
+    #: ARENA MENDEL panel. Deliberately NOT part of sec10.1's persisted
+    #: `mendel_runs` audit-field list (never a durable/queryable audit
+    #: fact -- MENDEL's own reasoning prose is not persistence-worthy
+    #: provenance, only an ephemeral courtesy to the human reviewing the
+    #: SAME invocation's own result). `darwin.workshop.mendel_service.
+    #: invoke_mendel` attaches this only onto the `MendelRun` object it
+    #: returns synchronously from a SUCCEEDED invocation; a `MendelRun`
+    #: read back later via `get_run`/`list_runs` (rehydrated from the
+    #: `mendel_runs` table, which has no such column) always carries
+    #: `None` here -- an honest reflection of sec10.1's own field list,
+    #: never a silent DB schema change smuggled in through this UI work
+    #: package.
+    reasoning_summary: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id or not self.run_id.strip():

@@ -38,7 +38,13 @@ from darwin.workshop import mendel_service, service
 from darwin.workshop.claude_code_mendel_adapter import ClaudeCodeMendelAdapter
 from darwin.workshop.domain import QuestionOrigin, QuestionStatus
 from darwin.workshop.errors import WorkshopNotFoundError
-from darwin.workshop.mendel_adapter import DeterministicTestMendelAdapter, MendelAdapter
+from darwin.workshop.mendel_adapter import (
+    DeterministicTestMendelAdapter,
+    MendelAdapter,
+    MendelInvocationResult,
+    RawMendelProposal,
+)
+from darwin.workshop.mendel_context import build_draft_capability_view
 from darwin.workshop.mendel_domain import (
     NO_DRAFT_YET,
     InvocationPurpose,
@@ -48,6 +54,7 @@ from darwin.workshop.mendel_errors import (
     MendelProposalNotFoundError,
     MendelRunNotFoundError,
 )
+from darwin.workshop.mendel_service import PROPOSAL_SCHEMA_VERSION
 
 
 class WorkshopOpenRequest(BaseModel):
@@ -170,6 +177,11 @@ def _mendel_run_dict(run) -> dict:
         "context_fingerprint": run.context_fingerprint, "provider_identity": run.provider_identity,
         "status": run.status.value, "started_at_utc": run.started_at_utc,
         "completed_at_utc": run.completed_at_utc, "error_classification": run.error_classification,
+        # PID-004C sec13/sec13.1 -- present only on the synchronous response
+        # to the invocation that produced it (see MendelRun.reasoning_summary's
+        # own docstring); a historical run read back later honestly carries
+        # `None` here, never a fabricated/re-derived value.
+        "reasoning_summary": run.reasoning_summary,
     }
 
 
@@ -186,6 +198,68 @@ def _mendel_proposal_dict(proposal) -> dict:
         "resulting_question_id": proposal.resulting_question_id,
         "resulting_decision_id": proposal.resulting_decision_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# PID-004C WP3 -- a small, fixed, illustrative RawMendelProposal set used
+# ONLY when `cfg.mendel_e2e_fixture_adapter_enabled` (DARWIN_MENDEL_
+# E2E_FIXTURE_ADAPTER=1) is explicitly set (darwin.core.config's own
+# docstring on that field). This exists purely so a real browser
+# (Playwright) driving a real running darwin_core container can exercise
+# a genuine invoke -> proposal render -> accept/reject/stale round trip --
+# it is never reachable in a real deployment. Payload shapes deliberately
+# mirror tests/fixtures/mendel.py's own known-good shapes exactly (never a
+# second, divergent notion of "what a valid proposal payload looks like").
+# ---------------------------------------------------------------------------
+_E2E_FIXTURE_PROPOSALS: tuple[RawMendelProposal, ...] = (
+    RawMendelProposal(
+        proposal_class="ASK_QUESTION", proposal_schema_version=PROPOSAL_SCHEMA_VERSION,
+        payload={
+            "semantic_subject": "entry.conditions.breakout_confirmation",
+            "question_text": "Does breakout confirmation require a closed candle, or does an intrabar wick touch count?",
+        },
+        rationale="The source text does not specify intrabar sensitivity for confirmation.",
+        affected_semantic_paths=("entry.conditions.breakout_confirmation",),
+    ),
+    RawMendelProposal(
+        proposal_class="MATERIAL_CONCERN", proposal_schema_version=PROPOSAL_SCHEMA_VERSION,
+        payload={
+            "concern": "Source assumes continuous liquidity; XAU_USD carries weekend gap risk that "
+            "could invalidate the backtested confirmation timing.",
+        },
+        rationale="Flagging a material assumption gap for human review.",
+        affected_semantic_paths=("entry.conditions",),
+    ),
+    RawMendelProposal(
+        proposal_class="PARAMETER_CHANGE", proposal_schema_version=PROPOSAL_SCHEMA_VERSION,
+        payload={"parameter_id": "max_daily_trades", "value_type": "INTEGER", "unit": None, "fixed_value": 3},
+        rationale="Bounding daily trade count per the source's own stated cadence.",
+        affected_semantic_paths=("parameters.max_daily_trades",),
+    ),
+    RawMendelProposal(
+        proposal_class="DATA_REQUIREMENT", proposal_schema_version=PROPOSAL_SCHEMA_VERSION,
+        payload={
+            "requirement_id": "iv_percentile_d1", "display_name": "XAU_USD D1 implied volatility percentile",
+            "fact_class": "IMPLIED_VOLATILITY", "fact_reference_kind": "CANONICAL_FACT_REFERENCE",
+            "authority_class": "OPTIONS_AUTHORITY", "instrument_applicability": ["XAU_USD"], "timeframe": "D1",
+            "required_historical_depth": {"count": 252, "unit": "BARS"}, "units": None,
+            "required_fields": ["value"], "causal_timing_policy": "NOT_APPLICABLE", "mandatory": True,
+        },
+        rationale="The strategy conditions entry on IV percentile -- a fully specifiable data need this "
+        "DARWIN build has no options-authority integration for yet (PID-004C sec8.4: specify faithfully, "
+        "never silently substitute a proxy).",
+        affected_semantic_paths=("data_requirements",),
+    ),
+)
+
+_E2E_FIXTURE_RESULT = MendelInvocationResult(
+    proposals=_E2E_FIXTURE_PROPOSALS,
+    reasoning_summary=(
+        "Reviewed the bounded Workshop context: one confirmation-timing ambiguity, one liquidity-"
+        "assumption concern, and one cadence-bounding parameter suggestion. No draft mutation was "
+        "performed directly -- each is a typed proposal awaiting human review."
+    ),
+)
 
 
 def register_mendel_routes(
@@ -217,6 +291,14 @@ def register_mendel_routes(
     """
     if adapter is not None:
         resolved_adapter: MendelAdapter = adapter
+    elif cfg.mendel_e2e_fixture_adapter_enabled:
+        # PID-004C WP3 -- explicit, narrow, OFF-BY-DEFAULT (darwin.core.
+        # config.DarwinConfig.mendel_e2e_fixture_adapter_enabled's own
+        # docstring). Checked BEFORE the real-credential branch below so a
+        # test environment can never accidentally combine the two.
+        resolved_adapter = DeterministicTestMendelAdapter(
+            result=_E2E_FIXTURE_RESULT, provider_identity="e2e-fixture-adapter/1.0.0"
+        )
     elif cfg.mendel_provider_api_key:
         resolved_adapter = ClaudeCodeMendelAdapter(api_key=cfg.mendel_provider_api_key)
     else:
@@ -301,6 +383,28 @@ def register_mendel_routes(
             except MendelProposalNotFoundError as exc:
                 raise _proposal_not_found(exc) from exc
         return {"proposal": _mendel_proposal_dict(proposal)}
+
+    @app.get("/api/v1/workshops/{workshop_id}/mendel/capability")
+    def get_mendel_capability_endpoint(workshop_id: str) -> dict:
+        """PID-004C sec8.3.1's `DraftCapabilityView` -- additive, read-only,
+        newly exposed by WP3 purely so the ARENA MENDEL panel can render
+        genuine data-capability/DATA_BLOCKED context (never fabricated)
+        without waiting on a persisted, post-finalisation
+        `DataReadinessAssessment` (darwin.workshop.mendel_context's own
+        module docstring: this is a bounded, DERIVED, pre-finalisation
+        view, safe to recompute at any time -- never part of
+        `StrategyVersion` identity). Reuses `mendel_context.
+        build_draft_capability_view` end to end -- never a second,
+        divergent availability check."""
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                draft, _ = service.get_draft(conn, workshop_id)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            data_requirements = tuple(draft.data_requirements.values()) if draft is not None else ()
+            capability = build_draft_capability_view(conn, data_requirements)
+        return {"capability": capability.as_document()}
 
 
 def register_workshop_routes(

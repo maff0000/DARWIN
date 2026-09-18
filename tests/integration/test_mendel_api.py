@@ -24,6 +24,7 @@ from darwin.workshop.mendel_adapter import (
 from darwin.workshop.mendel_domain import InvocationPurpose
 from tests.fixtures.mendel import (
     ask_question_proposal,
+    data_requirement_proposal,
     material_concern_proposal,
     open_workshop_with_draft,
 )
@@ -212,3 +213,81 @@ def test_no_generic_command_or_arbitrary_path_endpoint_under_mendel(pg_config):
         lowered = path.lower()
         for fragment in forbidden_fragments:
             assert fragment not in lowered, f"route {path!r} looks like a generic command/prompt surface"
+
+
+
+def test_invoke_mendel_endpoint_returns_the_bounded_reasoning_summary(pg_config):
+    """PID-004C sec13/sec13.1: the ARENA MENDEL panel needs a reasoning
+    summary alongside the proposal list. Present on THIS synchronous
+    invoke response (never fabricated/re-derived for a historical run --
+    see darwin.workshop.mendel_domain.MendelRun.reasoning_summary's own
+    docstring for why it is not part of the durable mendel_runs record)."""
+    client = _client(pg_config)
+    with connection(pg_config) as conn:
+        workshop, _ = open_workshop_with_draft(conn)
+
+    resp = client.post(
+        f"/api/v1/workshops/{workshop.workshop_id}/mendel/invoke",
+        json={"purpose": "REVIEW_DRAFT"},
+    )
+    assert resp.status_code == 200
+    run = resp.json()["run"]
+    assert run["status"] == "SUCCEEDED"
+    # The default (no adapter override, no fixture flag, no provider
+    # credential) DeterministicTestMendelAdapter's own honest fallback --
+    # see darwin.workshop.mendel_adapter.DeterministicTestMendelAdapter.invoke.
+    assert run["reasoning_summary"] == "no proposals configured"
+
+    # A historical read-back genuinely carries no reasoning summary --
+    # honest, not a bug (sec10.1's own persisted-field list never included
+    # it).
+    fetched = client.get(f"/api/v1/workshops/{workshop.workshop_id}/mendel/runs/{run['run_id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["run"]["reasoning_summary"] is None
+
+
+def test_mendel_capability_endpoint_reflects_draft_capability_view(pg_config):
+    """PID-004C sec8.3.1's `DraftCapabilityView`, newly exposed by this
+    work package purely so the ARENA panel can show genuine data-
+    capability context (never fabricated). Empty draft data_requirements
+    -> empty per_requirement list; after accepting a DATA_REQUIREMENT
+    proposal for a fact class DARWIN has no authority integration for,
+    the SAME endpoint honestly reports it unmet -- reusing exactly the
+    logic tests/integration/test_mendel_service.py's own sec15.2 proof
+    exercises at the service layer."""
+    client = _client(pg_config)
+    with connection(pg_config) as conn:
+        workshop, _ = open_workshop_with_draft(conn)
+
+    # `open_workshop_with_draft` (tests/fixtures/mendel.py) uses
+    # `minimal_valid_draft`, which already declares ONE real
+    # DataRequirement (the HERMES H1 OHLCV bundle every atomic condition
+    # needs) -- so the capability view honestly starts with that one
+    # entry, SUPPORTED_BUT_NOT_AVAILABLE (no MarketDataset row exists in
+    # this disposable test database), never an empty list.
+    before_resp = client.get(f"/api/v1/workshops/{workshop.workshop_id}/mendel/capability")
+    assert before_resp.status_code == 200
+    before_per_requirement = before_resp.json()["capability"]["per_requirement"]
+    assert {r["requirement_id"] for r in before_per_requirement} == {"hermes_xau_usd_h1_ohlcv"}
+    assert before_per_requirement[0]["availability"] == "SUPPORTED_BUT_NOT_AVAILABLE"
+
+    with connection(pg_config) as conn:
+        adapter = DeterministicTestMendelAdapter(
+            result=MendelInvocationResult(proposals=(data_requirement_proposal(),), reasoning_summary="seed"),
+        )
+        mendel_service.invoke_mendel(
+            conn, workshop.workshop_id, purpose=InvocationPurpose.PROPOSE_DATA_REQUIREMENTS, focus_text=None,
+            adapter=adapter,
+        )
+        proposal = mendel_service.list_proposals(conn, workshop.workshop_id)[0]
+        mendel_service.accept_proposal(conn, workshop.workshop_id, proposal.proposal_id, actor="matt")
+
+    resp = client.get(f"/api/v1/workshops/{workshop.workshop_id}/mendel/capability")
+    assert resp.status_code == 200
+    per_requirement = resp.json()["capability"]["per_requirement"]
+    by_id = {r["requirement_id"]: r for r in per_requirement}
+    # The pre-existing HERMES requirement is untouched by MENDEL's own
+    # DATA_REQUIREMENT proposal, and the new IV requirement is added
+    # alongside it -- never a silent replacement.
+    assert by_id["hermes_xau_usd_h1_ohlcv"]["availability"] == "SUPPORTED_BUT_NOT_AVAILABLE"
+    assert by_id["iv_percentile_d1"]["availability"] == "UNSUPPORTED_OR_AUTHORITY_MISSING"

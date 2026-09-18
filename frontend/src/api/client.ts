@@ -2,9 +2,14 @@ import type {
   BuildInfo,
   Candidate,
   DiscoverySort,
+  DraftCapabilityView,
   InstrumentDefinition,
   IntakeStatus,
+  InvocationPurpose,
   MarketDataset,
+  MendelInvokeRequest,
+  MendelProposal,
+  MendelRun,
   MigrationState,
   PipelineSummary,
   QuestionOrigin,
@@ -265,6 +270,42 @@ export const api = {
     get<{ readiness: ReadinessResult }>(`/workshops/${workshopId}/readiness`),
   assessWorkshopReadiness: (workshopId: string) =>
     post<{ readiness: ReadinessResult }>(`/workshops/${workshopId}/readiness/assess`, {}),
+
+  // --- PID-004C MENDEL Workshop Assistant ---
+  // Every call here hits the real DARWIN_core MENDEL routes
+  // (darwin/workshop/api.py's register_mendel_routes) exactly as they
+  // exist -- there is deliberately no client method that accepts a
+  // free-form prompt; `invokeMendel`'s body is always exactly
+  // `{purpose, focus_text}` against the closed InvocationPurpose
+  // vocabulary (PID-004C sec11.1.1/sec12).
+  invokeMendel: (workshopId: string, body: MendelInvokeRequest) =>
+    post<{ run: MendelRun }>(`/workshops/${workshopId}/mendel/invoke`, body),
+
+  listMendelRuns: (workshopId: string) =>
+    get<{ items: MendelRun[] }>(`/workshops/${workshopId}/mendel/runs`),
+
+  getMendelRun: (workshopId: string, runId: string) =>
+    get<{ run: MendelRun }>(`/workshops/${workshopId}/mendel/runs/${runId}`),
+
+  listMendelProposals: (workshopId: string, status?: string) =>
+    get<{ items: MendelProposal[] }>(
+      `/workshops/${workshopId}/mendel/proposals${status ? `?status=${status}` : ""}`,
+    ),
+
+  acceptMendelProposal: (workshopId: string, proposalId: string, body: { actor: string }) =>
+    post<{ proposal: MendelProposal }>(
+      `/workshops/${workshopId}/mendel/proposals/${proposalId}/accept`,
+      body,
+    ),
+
+  rejectMendelProposal: (workshopId: string, proposalId: string, body: { reason?: string | null } = {}) =>
+    post<{ proposal: MendelProposal }>(
+      `/workshops/${workshopId}/mendel/proposals/${proposalId}/reject`,
+      body,
+    ),
+
+  getMendelCapability: (workshopId: string) =>
+    get<{ capability: DraftCapabilityView }>(`/workshops/${workshopId}/mendel/capability`),
   getStrategyVersion: (strategyVersionId: string) =>
     get<StrategyVersionSummary>(`/strategy-versions/${strategyVersionId}`),
 };

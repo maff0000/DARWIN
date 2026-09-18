@@ -23,9 +23,14 @@ from darwin.workshop.mendel_adapter import (
     MendelInvocationResult,
     RawMendelProposal,
 )
+from darwin.workshop.mendel_context import (
+    DataNeedAvailability,
+    build_draft_capability_view,
+)
 from darwin.workshop.mendel_domain import (
     NO_DRAFT_YET,
     InvocationPurpose,
+    ProposalCategory,
     ProposalStatus,
     RunStatus,
 )
@@ -236,6 +241,48 @@ def test_accept_data_requirement_increments_revision_and_adds_requirement(pg_con
         draft, current_revision = service.get_draft(conn, workshop.workshop_id)
         assert current_revision == revision + 1
         assert "iv_percentile_d1" in draft.data_requirements
+
+
+def test_accept_data_requirement_for_unavailable_data_records_faithful_requirement_and_stays_data_blocked(pg_config):
+    """PID-004C sec15.2 (the Architect's own "data-blocked proof"), closed
+    at THIS layer -- genuinely missing anywhere in the codebase before
+    this test (see this work package's own final report): MENDEL
+    recommends *specify faithfully, record the required DataRequirement,
+    allow DATA_BLOCKED* -- never a silent proxy substitution (sec8.4).
+    `data_requirement_proposal()` (tests/fixtures/mendel.py) proposes a
+    real IMPLIED_VOLATILITY/OPTIONS_AUTHORITY requirement DARWIN genuinely
+    has no data-authority integration for (darwin.workshop.service.
+    evaluate_data_requirement_availability's own honest
+    AUTHORITY_NOT_ONBOARDED branch) -- this test proves the ACCEPTED
+    requirement survives verbatim (never rewritten to something DARWIN
+    happens to already support) and that PID-004C's own pre-finalisation
+    `DraftCapabilityView` (sec8.3.1) honestly reports it unmet. No ATHENA
+    integration exists anywhere in this codebase to call (PID-004C sec7.1/
+    sec11.2), so "no ATHENA call occurs" holds structurally, not just by
+    absence of an assertion."""
+    with connection(pg_config) as conn:
+        workshop, revision = open_workshop_with_draft(conn)
+        _invoke(conn, workshop.workshop_id, data_requirement_proposal())
+        proposal = mendel_service.list_proposals(conn, workshop.workshop_id)[0]
+        assert proposal.proposal_category == ProposalCategory.DRAFT_MUTATING
+
+        accepted = mendel_service.accept_proposal(conn, workshop.workshop_id, proposal.proposal_id, actor="matt")
+        assert accepted.status == ProposalStatus.ACCEPTED
+
+        draft, current_revision = service.get_draft(conn, workshop.workshop_id)
+        assert current_revision == revision + 1
+        requirement = draft.data_requirements["iv_percentile_d1"]
+        # Faithful record -- MENDEL's own proposed requirement shape
+        # survived exactly, never silently substituted for a different
+        # fact class/authority DARWIN happens to already have data for.
+        assert requirement.fact_class.value == "IMPLIED_VOLATILITY"
+        assert requirement.authority_class.value == "OPTIONS_AUTHORITY"
+        assert requirement.mandatory is True
+
+        capability_view = build_draft_capability_view(conn, tuple(draft.data_requirements.values()))
+        by_id = {r.requirement_id: r for r in capability_view.per_requirement}
+        assert by_id["iv_percentile_d1"].availability == DataNeedAvailability.UNSUPPORTED_OR_AUTHORITY_MISSING
+        assert "no data authority integration exists for OPTIONS_AUTHORITY" in (by_id["iv_percentile_d1"].reason or "")
 
 
 # ============================================================================

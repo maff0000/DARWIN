@@ -15,6 +15,7 @@ import { DecisionsPanel } from "../components/workshop/DecisionsPanel";
 import { DataRequirementsPanel } from "../components/workshop/DataRequirementsPanel";
 import { FinalisationPanel } from "../components/workshop/FinalisationPanel";
 import { HypothesisPanel } from "../components/workshop/HypothesisPanel";
+import { MendelPanel } from "../components/workshop/MendelPanel";
 import { PolicyPanel } from "../components/workshop/PolicyPanel";
 import { QuestionsPanel } from "../components/workshop/QuestionsPanel";
 import { ReadinessPanel } from "../components/workshop/ReadinessPanel";
@@ -263,6 +264,17 @@ export function Workshop() {
         onChanged={async () => {
           await reloadDecisions();
           await revalidate();
+        }}
+      />
+
+      <MendelPanel
+        workshopId={workshopId}
+        workshop={workshop}
+        draft={draft}
+        revision={revision}
+        onDraftMutated={async () => {
+          await reloadDraftOnly();
+          await reloadReadiness();
         }}
       />
 

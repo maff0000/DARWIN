@@ -525,6 +525,31 @@ with connection(cfg.postgres) as conn:
     )
     conn.commit()
 
+    # 5) PID-004C WP3 MENDEL fixture: a dedicated ACTIVE Workshop with a
+    # real, validation-clean draft at revision 1 -- e2e/mendel.spec.ts's
+    # own Workshop, never shared with any of the fixtures above (same
+    # "no cross-file row sharing" discipline this script's own comments
+    # already establish for scenario 1's dedicated discovery). The real
+    # MENDEL invocation itself happens LIVE during the test, through the
+    # real UI + the real POST .../mendel/invoke endpoint -- this only
+    # seeds the Workshop/draft the test opens (PID-004B/PID-004C
+    # directive: never construct Workshop/MENDEL state client-side).
+    candidate_mendel_id = new_id()
+    candidate_repo.create(
+        FoundationStrategyCandidate(
+            id=candidate_mendel_id, title="E2E MENDEL Fixture — Session Breakout",
+            pipeline_stage=PipelineStage.DISCOVERED,
+        )
+    )
+    workshop_mendel = workshop_service.open_workshop(conn, candidate_id=candidate_mendel_id)
+    mendel_draft = minimal_valid_draft(candidate_id=candidate_mendel_id)
+    workshop_service.update_draft(
+        conn, workshop_mendel.workshop_id, expected_revision=0,
+        draft_document=serialize_specification_draft(mendel_draft),
+        schema_semantic_version=mendel_draft.schema_semantic_version,
+    )
+    conn.commit()
+
 _OUTPUT = {
     "seeded": True,
     "xau_dataset_id": xau_dataset.id,
@@ -546,6 +571,8 @@ _OUTPUT = {
         "data_blocked_workshop_id": workshop_blocked.workshop_id,
         "stale_edit_candidate_id": candidate_stale_id,
         "stale_edit_workshop_id": workshop_stale.workshop_id,
+        "mendel_candidate_id": candidate_mendel_id,
+        "mendel_workshop_id": workshop_mendel.workshop_id,
     },
 }
 print(json.dumps(_OUTPUT))

@@ -17,6 +17,7 @@ as audit metadata (passed straight through onto the resulting
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import UTC, datetime
 
@@ -208,7 +209,12 @@ def invoke_mendel(
     proposal_repo = MendelProposalRepository(conn)
     for proposal in validated:
         proposal_repo.create(proposal)
-    return run_row_to_domain(row) if row else run
+    succeeded_run = run_row_to_domain(row) if row else run
+    # PID-004C sec13/sec13.1: attach the adapter's bounded reasoning
+    # summary onto THIS synchronous response only -- never persisted
+    # (see MendelRun.reasoning_summary's own docstring). `dataclasses.
+    # replace` never mutates the DB-rehydrated `succeeded_run` in place.
+    return dataclasses.replace(succeeded_run, reasoning_summary=result.reasoning_summary)
 
 
 def get_run(conn: psycopg.Connection, workshop_id: str, run_id: str) -> MendelRun:
