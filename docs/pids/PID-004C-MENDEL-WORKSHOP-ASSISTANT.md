@@ -12,7 +12,7 @@ bounded increment. It does not reopen or revise the closed PID-004 document.
 **Delivery controller:** ROGUE
 **Implementation:** FORGE under bounded work packages
 **Infrastructure:** HELM where required
-**Status:** DRAFT FOR ARCHITECT REVIEW — NOT AUTHORISED FOR IMPLEMENTATION
+**Status:** ACCEPTED — IMPLEMENTATION AUTHORISED (see §26)
 **Date:** 2026-09-18
 
 ---
@@ -1083,6 +1083,10 @@ implementation change may occur before that approval. If approved, delivery proc
 work package under normal HELM/FORGE/ROGUE governance, ending with an independent audit and an explicit
 stop-gate return before merge — exactly the discipline PID-004A/B already followed.
 
+**This rule's condition has been satisfied, not removed** — see §26 for the exact Architect acceptance
+verdict that authorises implementation. This section's original text is left unchanged above for the
+historical record of what was required before that point.
+
 ---
 
 # 25. AMENDMENT — BOUNDED HARDENING PASS (2026-09-18)
@@ -1124,6 +1128,36 @@ No implementation, migration, dependency, or Workshop/product code changed. Only
 
 ---
 
+# 26. ARCHITECT ACCEPTANCE RECORD (2026-09-18)
+
+Following the hardening pass (§25) and its request verdict
+`GREEN_DARWIN_PID004C_DEFINITION_HARDENED_READY_FOR_ARCHITECT_ACCEPTANCE`, the DARWIN Architect issued, in a
+directive titled "[DARWIN CENTRAL ARCHITECTURE — PID-004C ACCEPTANCE + IMPLEMENTATION AUTHORISATION]",
+the following verdict:
+
+```text
+Verdict: GREEN_DARWIN_PID004C_DEFINITION_ACCEPTED
+Accepted documentation head: 8240135e31fe1a33cc677cd2faaa6910338a2b8e
+PR: #12
+Exact-head CI: 35386117356 — GREEN
+Canonical main before documentation merge: f79b19c0b9b38c6deaa621ae656bbe13d32401ef
+```
+
+together with an explicit implementation-authorisation directive (merge PR #12; branch the implementation
+work from the merged result; proceed under normal bounded-work-package/audit/stop-gate governance). This
+verdict was issued as a direct instruction to the delivery controller (ROGUE) rather than as a further
+commit to this document at the time — recorded here, after the fact, so the document's own status
+reflects reality rather than the pre-acceptance state. PR #12 was subsequently merged into `main` as
+commit `7fa78f4326dc28f082b4af14661099841d69decb` (parents `f79b19c0b9b38c6deaa621ae656bbe13d32401ef` and
+`8240135e31fe1a33cc677cd2faaa6910338a2b8e`), and PID-004C implementation work began from that exact commit
+under a dedicated `pid-004c/mendel-workshop-assistant` branch, per §24 (now satisfied).
+
+This record does not authorise anything further than what the Architect's directive itself already
+authorised; it is a documentation-accuracy correction only.
+
+---
+
 # EXPECTED NEXT VERDICT REQUEST
 
-`GREEN_DARWIN_PID004C_DEFINITION_HARDENED_READY_FOR_ARCHITECT_ACCEPTANCE`
+`GREEN_DARWIN_PID004C_IMPLEMENTATION_READY_FOR_ARCHITECT_REVIEW` (per the Architect's implementation-phase
+stop-gate) — this document's own definition-phase verdict cycle is closed as of §26.
