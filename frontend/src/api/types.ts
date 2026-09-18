@@ -264,3 +264,311 @@ export interface ScoutManualDiscoveryRequest {
   tags?: string[];
   claimed_metrics?: Record<string, string | number> | null;
 }
+
+// --- PID-004B Strategy Workshop (darwin/workshop/{domain,api,service}.py,
+// darwin/specification/*.py) — mirrors the real API/serialization shapes
+// exactly, same discipline as the rest of this file. A SpecificationDraft's
+// governed sub-documents are typed as tagged unions on `__type__`, exactly
+// as darwin.specification.serialization encodes/decodes them — ARENA never
+// invents a shape the backend doesn't actually produce/accept. ---
+
+export type WorkshopStatus = "ACTIVE" | "FINALISED" | "ABANDONED";
+export type QuestionStatus = "OPEN" | "RESOLVED" | "WITHDRAWN";
+export type QuestionOrigin = "HUMAN";
+export type RuleOrigin = "SOURCE_RULE" | "USER_CLARIFICATION" | "WORKSHOP_PROPOSAL";
+export type DecisionAcceptanceState = "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
+export type ValidationOutcomeStatus = "VALID" | "STRATEGY_NOT_SUFFICIENTLY_DEFINED";
+export type ReadinessState = "UNASSESSED" | "TESTABLE" | "DATA_BLOCKED";
+export type PerRequirementAvailability =
+  | "AVAILABLE"
+  | "UNAVAILABLE"
+  | "INSUFFICIENT_HISTORY"
+  | "INSUFFICIENT_RESOLUTION"
+  | "AUTHORITY_NOT_ONBOARDED"
+  | "CONTRACT_INCOMPATIBLE"
+  | "UNKNOWN";
+
+export interface Candidate {
+  candidate_id: string;
+  title: string;
+  pipeline_stage: PipelineStage;
+  source_strategy_id: string | null;
+  origin_discovery_id: string | null;
+  created_at_utc: string | null;
+  updated_at_utc: string | null;
+}
+
+export interface Workshop {
+  workshop_id: string;
+  candidate_id: string;
+  status: WorkshopStatus;
+  discovery_ids: string[];
+  current_draft_id: string | null;
+  finalised_strategy_version_id: string | null;
+  created_at_utc: string | null;
+  updated_at_utc: string | null;
+}
+
+export interface WorkshopQuestion {
+  question_id: string;
+  workshop_id: string;
+  semantic_subject: string;
+  question_text: string;
+  rationale: string | null;
+  status: QuestionStatus;
+  origin: QuestionOrigin;
+  accepted_decision_id: string | null;
+  created_at_utc: string | null;
+  resolved_at_utc: string | null;
+}
+
+export interface WorkshopDecision {
+  decision_id: string;
+  workshop_id: string;
+  proposed_value: unknown;
+  origin: RuleOrigin;
+  actor: string;
+  acceptance_state: DecisionAcceptanceState;
+  affected_semantic_paths: string[];
+  related_question_id: string | null;
+  rationale: string | null;
+  created_at_utc: string | null;
+  superseded_by_decision_id: string | null;
+}
+
+export interface ValidationFinding {
+  stage: string;
+  code: string;
+  message: string;
+  path: string | null;
+}
+
+export interface ValidationOutcome {
+  status: ValidationOutcomeStatus;
+  is_valid: boolean;
+  findings: ValidationFinding[];
+}
+
+export interface ReadinessRequirement {
+  requirement_id: string;
+  availability: PerRequirementAvailability;
+  reason: string | null;
+}
+
+export interface StrategyVersionSummary {
+  strategy_version_id: string;
+  candidate_id: string;
+  title: string;
+  thesis: string;
+  semantic_fingerprint: string;
+  artifact_record_fingerprint: string;
+  finalised_at_utc: string;
+  version_label: string | null;
+}
+
+export interface ReadinessResult {
+  state: ReadinessState;
+  assessed_at_utc: string | null;
+  requirements: ReadinessRequirement[];
+}
+
+// --- Specification document node shapes (draft, tagged by __type__) -------
+
+export type InstrumentApplicabilityKind = "EXPLICIT_SINGLE" | "EXPLICIT_SET" | "INSTRUMENT_GENERIC";
+
+export interface InstrumentApplicabilityDoc {
+  __type__: "InstrumentApplicability";
+  kind: InstrumentApplicabilityKind;
+  instrument_ids: string[];
+  generic_criteria: string[];
+}
+
+export type ComparisonOperator = "EQ" | "NE" | "GT" | "GTE" | "LT" | "LTE" | "CROSSES_ABOVE" | "CROSSES_BELOW";
+export type Direction = "LONG" | "SHORT" | "BOTH";
+export type ComponentDirectionRelationship = "SAME" | "OPPOSITE" | "ANY";
+export type FactClass =
+  | "MARKET_OHLCV"
+  | "OPTIONS_CHAIN"
+  | "IMPLIED_VOLATILITY"
+  | "OPEN_INTEREST"
+  | "FUTURES_CURVE"
+  | "NEWS_CONTEXT"
+  | "ECONOMIC_SURPRISE"
+  | "PREDICTION_MARKET";
+export type DataAuthorityClass =
+  | "HERMES_CANONICAL_MARKET"
+  | "ARES_GOVERNED_CONTEXT"
+  | "OPTIONS_AUTHORITY"
+  | "FUTURES_AUTHORITY"
+  | "OTHER_GOVERNED_AUTHORITY";
+
+export interface LiteralDoc {
+  __type__: "Literal";
+  value: { __decimal__: string } | number | boolean | string | null;
+  unit: string | null;
+}
+
+export interface CanonicalFactReferenceDoc {
+  __type__: "CanonicalFactReference";
+  fact_key: string;
+  fact_class: FactClass;
+  authority_class: DataAuthorityClass;
+  unit: string;
+  timeframe: string;
+  requirement_id: string;
+}
+
+export interface ComparisonDoc {
+  __type__: "Comparison";
+  operator: ComparisonOperator;
+  left: LiteralDoc | CanonicalFactReferenceDoc | Record<string, unknown>;
+  right: LiteralDoc | CanonicalFactReferenceDoc | Record<string, unknown>;
+}
+
+export interface AtomicConditionDoc {
+  __type__: "AtomicCondition";
+  condition_id: string;
+  semantic_role: string;
+  timeframe: string;
+  expression: ComparisonDoc | Record<string, unknown>;
+  direction: Direction;
+}
+
+export interface AllCompositionDoc {
+  __type__: "AllComposition";
+  composition_id: string;
+  components: AtomicConditionDoc[];
+  direction_relationship: ComponentDirectionRelationship | null;
+}
+
+export interface AnyCompositionDoc {
+  __type__: "AnyComposition";
+  composition_id: string;
+  components: AtomicConditionDoc[];
+  direction_relationship: ComponentDirectionRelationship | null;
+}
+
+export type SequenceTieSemantics = "TIES_PERMITTED" | "TIES_BREAK_ORDER";
+
+export interface SequenceCompositionDoc {
+  __type__: "SequenceComposition";
+  composition_id: string;
+  components: Array<{ sequence_index: number; component: AtomicConditionDoc }>;
+  ordering_window_seconds: number;
+  tie_semantics: SequenceTieSemantics;
+  direction_relationship: ComponentDirectionRelationship | null;
+}
+
+export type ExpiryMode = "NOT_APPLICABLE" | "NEVER" | "FRAMES" | "DURATION";
+
+export interface ExpirySpecDoc {
+  __type__: "ExpirySpec";
+  mode: ExpiryMode;
+  frame_count: number | null;
+  finest_bound_timeframe: string | null;
+  duration_seconds: number | null;
+}
+
+export interface ContextTriggerCompositionDoc {
+  __type__: "ContextTriggerComposition";
+  composition_id: string;
+  context: AtomicConditionDoc;
+  trigger: AtomicConditionDoc;
+  context_validity: ExpirySpecDoc;
+  direction_relationship: ComponentDirectionRelationship | null;
+}
+
+export type CompositionDoc =
+  | AtomicConditionDoc
+  | AllCompositionDoc
+  | AnyCompositionDoc
+  | SequenceCompositionDoc
+  | ContextTriggerCompositionDoc;
+
+export type IntrabarAmbiguityPolicy = "NOT_APPLICABLE" | "CONSERVATIVE_SL_FIRST";
+
+export type ParameterStatus = "FIXED" | "TUNABLE";
+export type ParameterValueType = "DECIMAL" | "INTEGER" | "BOOLEAN" | "STRING" | "DURATION_SECONDS";
+
+export interface NumericRangeDomainDoc {
+  __type__: "NumericRangeDomain";
+  minimum: { __decimal__: string };
+  maximum: { __decimal__: string };
+  step: { __decimal__: string } | null;
+}
+
+export interface ParameterDefinitionDoc {
+  __type__: "ParameterDefinition";
+  parameter_id: string;
+  status: ParameterStatus;
+  value_type: ParameterValueType;
+  unit: string | null;
+  fixed_value: { __decimal__: string } | number | boolean | string | null;
+  domain: NumericRangeDomainDoc | Record<string, unknown> | null;
+}
+
+export type HistoricalDepthUnit = "BARS" | "DAYS" | "YEARS";
+export type FactReferenceKind = "CANONICAL_FACT_REFERENCE" | "SPECIFICATION_DERIVED_FACT";
+export type CausalTimingPolicy =
+  | "NOT_APPLICABLE"
+  | "ORIGINAL_PUBLISHED_VALUE_ONLY"
+  | "LATEST_CAUSALLY_AVAILABLE_REVISION";
+
+export interface DataRequirementDoc {
+  __type__: "DataRequirement";
+  requirement_id: string;
+  display_name: string;
+  fact_class: FactClass;
+  fact_reference_kind: FactReferenceKind;
+  authority_class: DataAuthorityClass;
+  instrument_applicability: string[];
+  timeframe: string | null;
+  required_historical_depth: { __type__: "HistoricalDepthRequirement"; count: number; unit: HistoricalDepthUnit };
+  units: string | null;
+  required_fields: string[];
+  causal_timing_policy: CausalTimingPolicy;
+  mandatory: boolean;
+}
+
+export type PolicyClass = "EXECUTION_POLICY" | "DIKE_POLICY" | "SIZING_POLICY" | "NEWS_CONTEXT_POLICY";
+export type PolicyCompatibility = "REQUIRED" | "PERMITTED" | "DISABLED" | "IRRELEVANT";
+
+export interface PolicyCompatibilityDeclarationDoc {
+  __type__: "PolicyCompatibilityDeclaration";
+  policy_class: PolicyClass;
+  compatibility: PolicyCompatibility;
+  authorized_search_envelope: unknown[];
+  notes: string | null;
+}
+
+export interface SessionSpecDoc {
+  __type__: "SessionSpec";
+  iana_timezone: string;
+  local_start: string;
+  local_end: string;
+  weekdays: number[];
+  dst_handling: "FOLLOW_IANA_TIMEZONE_RULES";
+  cross_midnight: boolean;
+}
+
+export interface SpecificationDraftDoc {
+  serialization_schema_version?: string;
+  __type__?: "SpecificationDraft";
+  draft_id: string;
+  candidate_id: string;
+  schema_semantic_version: string;
+  title: string;
+  thesis: string;
+  instrument_applicability: InstrumentApplicabilityDoc | null;
+  composition: CompositionDoc | null;
+  fixed_parameters: Record<string, ParameterDefinitionDoc>;
+  tunable_parameters: Record<string, ParameterDefinitionDoc>;
+  policy_declarations: PolicyCompatibilityDeclarationDoc[];
+  data_requirements: Record<string, DataRequirementDoc>;
+  session_spec: SessionSpecDoc | null;
+  intrabar_ambiguity_policy: IntrabarAmbiguityPolicy | null;
+  setup_expiry: ExpirySpecDoc | null;
+  exit_rules: AtomicConditionDoc[];
+  provenance: Record<string, unknown>;
+  created_at_utc: string | null;
+}
