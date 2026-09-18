@@ -5,14 +5,42 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${DARWIN_PG_DB:-darwin}
-      POSTGRES_USER: ${DARWIN_PG_USER:-darwin_app}
-      POSTGRES_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
+      # PID-004A adversarial-audit fix #2 / persistence-contract closure
+      # gap 2b: a TEMPORARY bootstrap administrator, distinct from every
+      # long-lived credential below. Exists only so the official postgres
+      # image has *some* initial superuser to run
+      # docker-entrypoint-initdb.d/ as -- never used by darwin_core or
+      # `darwin migrate`/`darwin apply-grants` afterwards. This replaces
+      # the original defect: POSTGRES_USER used to be ${DARWIN_PG_USER:-
+      # darwin_app}, i.e. darwin_core's own runtime credential WAS the
+      # bootstrap superuser.
+      POSTGRES_USER: ${DARWIN_PG_BOOTSTRAP_USER:-darwin_bootstrap_admin}
+      POSTGRES_PASSWORD: ${DARWIN_PG_BOOTSTRAP_PASSWORD:-darwin_bootstrap_dev_only_password}
+      # Read by 01_fresh_bootstrap_roles.sql via psql's `\getenv` at
+      # initdb time -- never written into the SQL file itself, and only
+      # takes effect the FIRST time this volume is initialised (the
+      # official postgres image only ever runs
+      # docker-entrypoint-initdb.d/ scripts against a genuinely empty
+      # data directory).
+      DARWIN_MIGRATOR_BOOTSTRAP_PASSWORD: ${DARWIN_MIGRATOR_PG_PASSWORD:-darwin_migrator_dev_only_password}
+      DARWIN_APP_BOOTSTRAP_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
     volumes:
       - darwin_sql_data:/var/lib/postgresql/data
+      # Fresh-bootstrap role creation (darwin_owner/darwin_migrator/
+      # darwin_app + schema ownership hardening) -- runs automatically
+      # exactly once, against a brand-new empty volume. Table-level
+      # grants (02_grant_app_table_privileges.sql) are deliberately NOT
+      # mounted here: they target tables that do not exist yet at initdb
+      # time, before any migration has run. See the darwin_migrate
+      # service below, which applies them (via `darwin apply-grants`)
+      # immediately after `darwin migrate`, under the same governed
+      # darwin_migrator authority -- the exact 3-step sequence
+      # 01_fresh_bootstrap_roles.sql's own header already documents.
+      - ./darwin/research_store/bootstrap/01_fresh_bootstrap_roles.sql:/docker-entrypoint-initdb.d/01_fresh_bootstrap_roles.sql:ro
     networks:
       - darwin_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DARWIN_PG_USER:-darwin_app} -d ${DARWIN_PG_DB:-darwin}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DARWIN_PG_BOOTSTRAP_USER:-darwin_bootstrap_admin} -d ${DARWIN_PG_DB:-darwin}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,6 +52,9 @@ services:
       args:
         DARWIN_BUILD_COMMIT: ${DARWIN_BUILD_COMMIT:-unknown}
         DARWIN_BUILD_TIME: ${DARWIN_BUILD_TIME:-unknown}
+    # Explicit, stable tag so darwin_migrate (below) can run the exact
+    # same built image without a redundant second build.
+    image: darwin_core:${DARWIN_BUILD_COMMIT:-dev}
     depends_on:
       darwin_sql:
         condition: service_healthy
@@ -32,6 +63,12 @@ services:
       DARWIN_PG_HOST: darwin_sql
       DARWIN_PG_PORT: "5432"
       DARWIN_PG_DB: ${DARWIN_PG_DB:-darwin}
+      # The RESTRICTED runtime role ONLY -- NOSUPERUSER/NOCREATEDB/
+      # NOCREATEROLE/NOREPLICATION/NOBYPASSRLS, owns nothing, granted only
+      # the DML in 02_grant_app_table_privileges.sql. darwin_core's own
+      # runtime connection must NEVER use the bootstrap/admin credential
+      # above, and NEVER darwin_migrator either (PID-004A adversarial-
+      # audit fix #2 / persistence-contract closure gap 2b).
       DARWIN_PG_USER: ${DARWIN_PG_USER:-darwin_app}
       DARWIN_PG_PASSWORD: ${DARWIN_PG_PASSWORD:-darwin_app_dev_password}
       DARWIN_HERMES_HOST: ${DARWIN_HERMES_HOST:?DARWIN_HERMES_HOST must be set externally}
@@ -49,6 +86,53 @@ services:
       - "${DARWIN_CORE_PORT:-8000}:8000"
     networks:
       - darwin_net
+
+  # A separate, short-lived migration job -- NOT the long-running
+  # darwin_core service -- is the only thing that should ever
+  # authenticate as darwin_migrator. Runs `darwin migrate` followed
+  # immediately by `darwin apply-grants` (darwin/cli.py's
+  # cmd_apply_grants), both under the SAME governed migrator/owner
+  # authority, against whichever tables that migration run just
+  # created/left in place. Deliberately not part of `docker compose
+  # up`'s default service set (no plain dependency from darwin_core, so
+  # `docker compose up` alone never needs it) -- invoke explicitly, once,
+  # after `darwin_sql` is healthy and before starting `darwin_core`:
+  #   docker compose --profile migrate run --rm darwin_migrate
+  darwin_migrate:
+    image: darwin_core:${DARWIN_BUILD_COMMIT:-dev}
+    command: ["sh", "-c", "darwin migrate && darwin apply-grants"]
+    depends_on:
+      darwin_sql:
+        condition: service_healthy
+    environment:
+      DARWIN_ENV: ${DARWIN_ENV:-dev}
+      DARWIN_PG_HOST: darwin_sql
+      DARWIN_PG_PORT: "5432"
+      DARWIN_PG_DB: ${DARWIN_PG_DB:-darwin}
+      # darwin_migrator ONLY -- distinct from both the bootstrap/admin
+      # credential and the restricted darwin_app runtime credential.
+      # Assumes darwin_owner automatically
+      # (01_fresh_bootstrap_roles.sql's `ALTER ROLE darwin_migrator SET
+      # role = 'darwin_owner'`), so `darwin migrate` creates every table
+      # owned by darwin_owner with zero code change, and `darwin
+      # apply-grants` can GRANT as that owner immediately afterward.
+      DARWIN_PG_USER: ${DARWIN_MIGRATOR_PG_USER:-darwin_migrator}
+      DARWIN_PG_PASSWORD: ${DARWIN_MIGRATOR_PG_PASSWORD:-darwin_migrator_dev_only_password}
+      # DarwinConfig.load() requires HERMES configuration even though
+      # neither `darwin migrate` nor `darwin apply-grants` ever reaches
+      # HERMES -- same placeholder discipline the CI e2e recipe already
+      # uses for a step that never touches HERMES either.
+      DARWIN_HERMES_HOST: unused
+      DARWIN_HERMES_PORT: "3307"
+      DARWIN_HERMES_DB: unused
+      DARWIN_HERMES_USER: unused
+      DARWIN_HERMES_PASSWORD: unused
+      DARWIN_BUILD_VERSION: ${DARWIN_BUILD_VERSION:-0.1.0}
+      DARWIN_BUILD_COMMIT: ${DARWIN_BUILD_COMMIT:-unknown}
+      DARWIN_BUILD_TIME: ${DARWIN_BUILD_TIME:-unknown}
+    networks:
+      - darwin_net
+    profiles: ["migrate"]
 
 secrets:
   darwin_ro_credential:
