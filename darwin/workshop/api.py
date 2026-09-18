@@ -35,6 +35,7 @@ from darwin.research_store.db import connection
 from darwin.specification.provenance import RuleOrigin
 from darwin.specification.serialization import serialize_specification_draft
 from darwin.workshop import mendel_service, service
+from darwin.workshop.claude_code_mendel_adapter import ClaudeCodeMendelAdapter
 from darwin.workshop.domain import QuestionOrigin, QuestionStatus
 from darwin.workshop.errors import WorkshopNotFoundError
 from darwin.workshop.mendel_adapter import DeterministicTestMendelAdapter, MendelAdapter
@@ -197,13 +198,29 @@ def register_mendel_routes(
 
     `adapter` is a deliberate, narrow dependency-injection point (PID-004C
     sec11.4's own directive: "wire the real adapter selection as a
-    config/DI point"). WP1 defaults to `DeterministicTestMendelAdapter` --
-    an HONEST interim state, not a hidden placeholder: there is no real
-    Claude Code integration in this build yet (`darwin.workshop.
-    mendel_adapter`'s own module docstring names the follow-up work
-    package that replaces this default).
+    config/DI point") -- an explicit caller-supplied adapter (tests, or a
+    future deployment-specific override) always wins outright. Absent
+    that, PID-004C WP2's own default selection is config-driven and safe:
+    `ClaudeCodeMendelAdapter` (the real Claude Code CLI integration) is
+    used ONLY when `cfg.mendel_provider_api_key` is actually configured
+    (`darwin.core.config.resolve_mendel_provider_api_key` -- the
+    `DARWIN_MENDEL_PROVIDER_API_KEY_FILE` secret-file slot); otherwise
+    this falls back to `DeterministicTestMendelAdapter`, an HONEST interim
+    state, not a hidden placeholder -- `darwin_core` must never fail to
+    start, nor silently misbehave, just because MENDEL's real provider
+    credential has not been provisioned yet. Constructing
+    `ClaudeCodeMendelAdapter` itself calls the real `claude` CLI's own
+    `--version` (see that class's docstring) -- if the `claude` binary is
+    missing entirely despite a credential being configured, that failure
+    surfaces here, at startup, not silently deferred to the first
+    invocation.
     """
-    resolved_adapter: MendelAdapter = adapter if adapter is not None else DeterministicTestMendelAdapter()
+    if adapter is not None:
+        resolved_adapter: MendelAdapter = adapter
+    elif cfg.mendel_provider_api_key:
+        resolved_adapter = ClaudeCodeMendelAdapter(api_key=cfg.mendel_provider_api_key)
+    else:
+        resolved_adapter = DeterministicTestMendelAdapter()
 
     def _run_not_found(exc: MendelRunNotFoundError) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))

@@ -21,17 +21,14 @@ construction-validated `MendelProposal` (or refuses it) -- this module
 never performs that validation itself, so there is exactly one place
 (`invoke_mendel`) that decides whether adapter output is trustworthy.
 
-# TODO(PID-004C WP2): real Claude Code MendelAdapter.
-This work package (WP1) defines the interface and ships exactly one
-concrete implementation, `DeterministicTestMendelAdapter` -- a
-fixture-driven test double, never the real Claude Code subprocess
-integration. Wiring the actual Claude Code CLI/SDK boundary (PID-004C
-sec11.4's "Claude Code / future specialist implementation") -- including
-which exact CLI flags/transport to use, how `provider_identity` is
-derived from a real model/version string, and how the zero-tool
-constraint (PID-004C sec11.3) is enforced against a real Claude Code
-invocation -- is explicitly out of scope here and is a separate,
-later work package's job. Do not guess at CLI flags.
+This module (WP1) defines the interface and ships exactly one test-double
+concrete implementation, `DeterministicTestMendelAdapter` -- never the
+real Claude Code subprocess integration. The real Claude Code CLI
+integration (PID-004C sec11.4's "Claude Code / future specialist
+implementation") is `darwin.workshop.claude_code_mendel_adapter.
+ClaudeCodeMendelAdapter` (PID-004C WP2) -- kept in its own module rather
+than added here, so this interface file's own diff stays minimal; it
+depends on nothing beyond this module's public contract.
 """
 from __future__ import annotations
 

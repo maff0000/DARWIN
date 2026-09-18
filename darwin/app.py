@@ -427,11 +427,13 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
     register_workshop_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
 
     # --- PID-004C MENDEL Workshop Assistant (docs/pids/
-    # PID-004C-MENDEL-WORKSHOP-ASSISTANT.md sec12) -- WP1 backend slice only
-    # (no real Claude Code adapter yet -- darwin.workshop.api.
-    # register_mendel_routes defaults to DeterministicTestMendelAdapter,
-    # an honest interim state). Same process, same mounting discipline as
-    # the Workshop routes immediately above.
+    # PID-004C-MENDEL-WORKSHOP-ASSISTANT.md sec12) -- WP1 backend + WP2 real
+    # Claude Code adapter. darwin.workshop.api.register_mendel_routes picks
+    # ClaudeCodeMendelAdapter when cfg.mendel_provider_api_key is configured
+    # (DARWIN_MENDEL_PROVIDER_API_KEY_FILE), else falls back to
+    # DeterministicTestMendelAdapter -- an honest, additive, non-fatal
+    # default, never a startup requirement. Same process, same mounting
+    # discipline as the Workshop routes immediately above.
     register_mendel_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
 
     _mount_arena(app)
