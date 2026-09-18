@@ -9,6 +9,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+import psycopg
+
 from darwin.core.config import ConfigError, DarwinConfig
 from darwin.core.errors import DarwinError
 from darwin.hermes.contract import Timeframe
@@ -19,6 +21,16 @@ from darwin.research_store.models import MarketDatasetRecord
 from darwin.research_store.repositories import MarketDatasetRepository
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "research_store" / "migrations_sql"
+
+# PID-004A persistence-contract closure (gap 2b): the darwin_app table-level
+# grant script -- governed, explicit allowlist, existence-conditional per
+# table (darwin/research_store/bootstrap/02_grant_app_table_privileges.sql).
+# Applying it is part of the SAME governed migration-execution authority as
+# `darwin migrate` -- both must run as darwin_migrator (never darwin_app,
+# never darwin_core's own runtime connection) -- see `cmd_apply_grants`.
+GRANTS_FILE = (
+    Path(__file__).resolve().parent / "research_store" / "bootstrap" / "02_grant_app_table_privileges.sql"
+)
 
 
 def cmd_health(_args: argparse.Namespace) -> int:
@@ -44,6 +56,29 @@ def cmd_migrate(_args: argparse.Namespace) -> int:
     cfg = DarwinConfig.load()
     applied = run_migrations(cfg.postgres, MIGRATIONS_DIR)
     print(json.dumps({"applied": applied}))
+    return 0
+
+
+def cmd_apply_grants(_args: argparse.Namespace) -> int:
+    """PID-004A persistence-contract closure (gap 2b): apply the
+    darwin_app table-level DML grants
+    (darwin/research_store/bootstrap/02_grant_app_table_privileges.sql)
+    against whichever tables currently exist. Deliberately a separate
+    step from `cmd_migrate` -- never folded into it -- so the exact same
+    governed-authority invocation pattern (connect as darwin_migrator,
+    which assumes darwin_owner via its role-level `SET ROLE` default,
+    never darwin_app or darwin_core's own runtime connection) is visible
+    and auditable as its own explicit action, matching
+    darwin/research_store/bootstrap/01_fresh_bootstrap_roles.sql's own
+    documented 3-step bootstrap sequence (start container -> `darwin
+    migrate` -> apply this grant script)."""
+    cfg = DarwinConfig.load()
+    sql = GRANTS_FILE.read_text(encoding="utf-8")
+    with psycopg.connect(cfg.postgres.dsn()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+        conn.commit()
+    print(json.dumps({"applied": GRANTS_FILE.name}))
     return 0
 
 
@@ -112,6 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("health").set_defaults(func=cmd_health)
     sub.add_parser("db-status").set_defaults(func=cmd_db_status)
     sub.add_parser("migrate").set_defaults(func=cmd_migrate)
+    sub.add_parser("apply-grants").set_defaults(func=cmd_apply_grants)
     sub.add_parser("hermes-check").set_defaults(func=cmd_hermes_check)
 
     load_parser = sub.add_parser("dataset-load")
