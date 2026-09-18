@@ -53,6 +53,26 @@ class StaleRevisionError(SpecificationPersistenceError):
     code = "SPECIFICATION_STALE_REVISION"
 
 
+class InconsistentDraftOriginError(SpecificationPersistenceError):
+    """Raised when `SpecificationVersionRepository.create()` is asked to
+    persist a `(source_draft_id, source_draft_revision)` pair that is not
+    one of the two shapes migration 0008
+    (`0008_strategy_version_draft_origin_integrity.sql`) allows at the
+    database layer:
+
+        (None, None)                                -- legacy/Foundation
+        (non-None id, revision) with revision >= 1   -- PID-004A finalisation
+
+    This is defence in depth ABOVE the database CHECK constraint (item 1b
+    of the source-draft identity integrity closure) -- both this
+    repository guard and the migration 0008 constraint independently
+    enforce the exact same invariant, so a bug in either layer alone still
+    leaves the other standing. Raised before any SQL is sent, so an
+    inconsistent pair never even reaches the database."""
+
+    code = "SPECIFICATION_INCONSISTENT_DRAFT_ORIGIN"
+
+
 # --- candidate lineage / discovery provenance (item 3) ----------------------
 
 
@@ -192,6 +212,38 @@ class SpecificationDraftRepository:
             return [dict(r) for r in cur.fetchall()]
 
 
+def _validate_draft_origin_pair(
+    *, source_draft_id: str | None, source_draft_revision: int | None
+) -> None:
+    """Repository-level guard (source-draft identity integrity closure,
+    item 1b) -- defence in depth ABOVE migration 0008's DB-level CHECK
+    constraint, enforcing the exact same invariant independently:
+
+        (None, None)                                -- legacy/Foundation
+        (non-None id, revision) with revision >= 1   -- PID-004A finalisation
+
+    Rejects, each with a distinguishable message: an id given without a
+    revision, a revision given without an id, and a non-positive
+    revision (0 or negative) given alongside an id."""
+    if source_draft_id is None and source_draft_revision is None:
+        return
+    if source_draft_id is None and source_draft_revision is not None:
+        raise InconsistentDraftOriginError(
+            f"source_draft_revision={source_draft_revision!r} was given without a "
+            f"source_draft_id -- a draft revision can only be provided alongside its draft id"
+        )
+    if source_draft_id is not None and source_draft_revision is None:
+        raise InconsistentDraftOriginError(
+            f"source_draft_id={source_draft_id!r} was given without a source_draft_revision -- "
+            f"a PID-004A finalisation must record which exact draft revision it finalised"
+        )
+    if source_draft_revision <= 0:
+        raise InconsistentDraftOriginError(
+            f"source_draft_revision={source_draft_revision!r} is not >= 1 "
+            f"(source_draft_id={source_draft_id!r}) -- draft revisions are 1-indexed"
+        )
+
+
 # --- canonical StrategyVersion persistence (item 5/6/7) ----------------------
 
 
@@ -219,6 +271,9 @@ class SpecificationVersionRepository:
         source_draft_id: str | None = None,
         source_draft_revision: int | None = None,
     ) -> None:
+        _validate_draft_origin_pair(
+            source_draft_id=source_draft_id, source_draft_revision=source_draft_revision
+        )
         label = version_label or version.strategy_version_id
         full_payload = serialize_strategy_version(version)
         with self._conn.cursor() as cur:
