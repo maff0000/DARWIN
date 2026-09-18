@@ -207,6 +207,27 @@ DO $$ BEGIN IF to_regclass('public.workshop_decisions') IS NOT NULL THEN
     GRANT SELECT, INSERT, UPDATE ON TABLE workshop_decisions TO darwin_app;
 END IF; END $$;
 
+-- --- PID-004C MENDEL Workshop Assistant (migration 0011) ----------------
+-- mendel_runs: the application mutates status/completed_at_utc/
+--   error_classification in place (invoke_mendel's RUNNING -> terminal
+--   transition) -- UPDATE is granted, DELETE is not (run history is
+--   durable audit, never deleted).
+-- mendel_proposals: append-only (PID-004C) -- UPDATE is granted ONLY
+--   because status/resolved_at_utc/resulting_question_id/
+--   resulting_decision_id legitimately change post-insert (accept/reject/
+--   stale transitions); migration 0011's own
+--   `trg_mendel_proposals_content_immutable` trigger is the real backstop
+--   against a rewrite of substantive proposal content even though UPDATE
+--   privilege is granted -- same defence-in-depth shape as
+--   workshop_decisions above. No DELETE anywhere.
+DO $$ BEGIN IF to_regclass('public.mendel_runs') IS NOT NULL THEN
+    GRANT SELECT, INSERT, UPDATE ON TABLE mendel_runs TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.mendel_proposals') IS NOT NULL THEN
+    GRANT SELECT, INSERT, UPDATE ON TABLE mendel_proposals TO darwin_app;
+END IF; END $$;
+
 -- No sequence grants: every primary key in this schema is an
 -- application-generated UUID (darwin.core.identities.new_id()) or a
 -- plain TEXT natural key (schema_migrations.version) -- there is no

@@ -34,9 +34,19 @@ from darwin.core.health import ReadinessReport
 from darwin.research_store.db import connection
 from darwin.specification.provenance import RuleOrigin
 from darwin.specification.serialization import serialize_specification_draft
-from darwin.workshop import service
+from darwin.workshop import mendel_service, service
 from darwin.workshop.domain import QuestionOrigin, QuestionStatus
 from darwin.workshop.errors import WorkshopNotFoundError
+from darwin.workshop.mendel_adapter import DeterministicTestMendelAdapter, MendelAdapter
+from darwin.workshop.mendel_domain import (
+    NO_DRAFT_YET,
+    InvocationPurpose,
+    ProposalStatus,
+)
+from darwin.workshop.mendel_errors import (
+    MendelProposalNotFoundError,
+    MendelRunNotFoundError,
+)
 
 
 class WorkshopOpenRequest(BaseModel):
@@ -88,6 +98,26 @@ class WorkshopFinaliseRequest(BaseModel):
     version_label: str | None = None
 
 
+class MendelInvokeRequest(BaseModel):
+    """PID-004C sec11.1.1: `purpose` is validated by pydantic against the
+    closed `InvocationPurpose` enum -- an out-of-vocabulary value is
+    rejected with 422 before this request body is ever handed to
+    `mendel_service.invoke_mendel`. There is deliberately no free-form
+    `prompt` field anywhere on this model (PID-004C sec11.1.1/sec12: no
+    generic invocation surface)."""
+
+    purpose: InvocationPurpose
+    focus_text: str | None = None
+
+
+class MendelProposalAcceptRequest(BaseModel):
+    actor: str = Field(min_length=1)
+
+
+class MendelProposalRejectRequest(BaseModel):
+    reason: str | None = None
+
+
 def _workshop_dict(w) -> dict:
     return {
         "workshop_id": w.workshop_id,
@@ -130,6 +160,130 @@ def _validation_outcome_dict(outcome) -> dict:
             {"stage": f.stage, "code": f.code, "message": f.message, "path": f.path} for f in outcome.findings
         ],
     }
+
+
+def _mendel_run_dict(run) -> dict:
+    return {
+        "run_id": run.run_id, "workshop_id": run.workshop_id, "purpose": run.purpose.value,
+        "focus_text": run.focus_text, "context_schema_version": run.context_schema_version,
+        "context_fingerprint": run.context_fingerprint, "provider_identity": run.provider_identity,
+        "status": run.status.value, "started_at_utc": run.started_at_utc,
+        "completed_at_utc": run.completed_at_utc, "error_classification": run.error_classification,
+    }
+
+
+def _mendel_proposal_dict(proposal) -> dict:
+    binding = proposal.generated_against_draft_revision
+    return {
+        "proposal_id": proposal.proposal_id, "run_id": proposal.run_id, "workshop_id": proposal.workshop_id,
+        "proposal_class": proposal.proposal_class.value, "proposal_category": proposal.proposal_category.value,
+        "proposal_schema_version": proposal.proposal_schema_version, "payload": proposal.payload,
+        "rationale": proposal.rationale, "affected_semantic_paths": list(proposal.affected_semantic_paths),
+        "generated_against_draft_revision": "NO_DRAFT_YET" if binding is NO_DRAFT_YET else binding,
+        "status": proposal.status.value, "created_at_utc": proposal.created_at_utc,
+        "resolved_at_utc": proposal.resolved_at_utc,
+        "resulting_question_id": proposal.resulting_question_id,
+        "resulting_decision_id": proposal.resulting_decision_id,
+    }
+
+
+def register_mendel_routes(
+    app: FastAPI, cfg: DarwinConfig, *, adapter: MendelAdapter | None = None,
+    ensure_ready_for_data: Callable[[ReadinessReport], None], readiness: Callable[[DarwinConfig], ReadinessReport],
+) -> None:
+    """PID-004C sec12 -- Workshop-scoped MENDEL endpoints, mounted the same
+    way `register_workshop_routes` is (same FastAPI process -- PID-004C
+    sec22: no standalone MENDEL microservice).
+
+    `adapter` is a deliberate, narrow dependency-injection point (PID-004C
+    sec11.4's own directive: "wire the real adapter selection as a
+    config/DI point"). WP1 defaults to `DeterministicTestMendelAdapter` --
+    an HONEST interim state, not a hidden placeholder: there is no real
+    Claude Code integration in this build yet (`darwin.workshop.
+    mendel_adapter`'s own module docstring names the follow-up work
+    package that replaces this default).
+    """
+    resolved_adapter: MendelAdapter = adapter if adapter is not None else DeterministicTestMendelAdapter()
+
+    def _run_not_found(exc: MendelRunNotFoundError) -> HTTPException:
+        return HTTPException(status_code=404, detail=str(exc))
+
+    def _proposal_not_found(exc: MendelProposalNotFoundError) -> HTTPException:
+        return HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/v1/workshops/{workshop_id}/mendel/invoke")
+    def invoke_mendel_endpoint(workshop_id: str, body: MendelInvokeRequest) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                run = mendel_service.invoke_mendel(
+                    conn, workshop_id, purpose=body.purpose, focus_text=body.focus_text,
+                    adapter=resolved_adapter,
+                )
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"run": _mendel_run_dict(run)}
+
+    @app.get("/api/v1/workshops/{workshop_id}/mendel/runs")
+    def list_mendel_runs_endpoint(workshop_id: str) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                runs = mendel_service.list_runs(conn, workshop_id)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"items": [_mendel_run_dict(r) for r in runs]}
+
+    @app.get("/api/v1/workshops/{workshop_id}/mendel/runs/{run_id}")
+    def get_mendel_run_endpoint(workshop_id: str, run_id: str) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                run = mendel_service.get_run(conn, workshop_id, run_id)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except MendelRunNotFoundError as exc:
+                raise _run_not_found(exc) from exc
+        return {"run": _mendel_run_dict(run)}
+
+    @app.get("/api/v1/workshops/{workshop_id}/mendel/proposals")
+    def list_mendel_proposals_endpoint(workshop_id: str, status: str | None = None) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        parsed_status = ProposalStatus(status) if status is not None else None
+        with connection(cfg.postgres) as conn:
+            try:
+                proposals = mendel_service.list_proposals(conn, workshop_id, status=parsed_status)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"items": [_mendel_proposal_dict(p) for p in proposals]}
+
+    @app.post("/api/v1/workshops/{workshop_id}/mendel/proposals/{proposal_id}/accept")
+    def accept_mendel_proposal_endpoint(
+        workshop_id: str, proposal_id: str, body: MendelProposalAcceptRequest
+    ) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                proposal = mendel_service.accept_proposal(conn, workshop_id, proposal_id, actor=body.actor)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except MendelProposalNotFoundError as exc:
+                raise _proposal_not_found(exc) from exc
+        return {"proposal": _mendel_proposal_dict(proposal)}
+
+    @app.post("/api/v1/workshops/{workshop_id}/mendel/proposals/{proposal_id}/reject")
+    def reject_mendel_proposal_endpoint(
+        workshop_id: str, proposal_id: str, body: MendelProposalRejectRequest
+    ) -> dict:
+        ensure_ready_for_data(readiness(cfg))
+        with connection(cfg.postgres) as conn:
+            try:
+                proposal = mendel_service.reject_proposal(conn, workshop_id, proposal_id, reason=body.reason)
+            except WorkshopNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except MendelProposalNotFoundError as exc:
+                raise _proposal_not_found(exc) from exc
+        return {"proposal": _mendel_proposal_dict(proposal)}
 
 
 def register_workshop_routes(

@@ -51,14 +51,17 @@ class QuestionStatus(StrEnum):
 
 
 class QuestionOrigin(StrEnum):
-    """Closed vocabulary, deliberately holding exactly one value today.
-    PID-004B does not build MENDEL (PID-004 sec46/sec48) -- this enum is
-    the forward seam a future MENDEL integration would extend (add a new
+    """Closed vocabulary. PID-004B's own code comment named this enum the
+    forward seam a future MENDEL integration would extend (add a new
     member + widen migration 0009's CHECK constraint in its own reviewed
-    migration), never a free-text column standing in for a real
-    vocabulary."""
+    migration) -- PID-004C (docs/pids/PID-004C-MENDEL-WORKSHOP-ASSISTANT.md
+    sec6.3/sec10.3) is exactly that extension: `MENDEL` is locked as the
+    new member, widened via migration 0011
+    (`0011_mendel_workshop_assistant.sql`), still never a free-text column
+    standing in for a real vocabulary."""
 
     HUMAN = "HUMAN"
+    MENDEL = "MENDEL"
 
 
 class DecisionAcceptanceState(StrEnum):
