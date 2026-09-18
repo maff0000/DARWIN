@@ -28,6 +28,13 @@ class StrategyCandidate:
     title: str
     source_strategy_id: str | None = None
     pipeline_stage: PipelineStage = PipelineStage.DISCOVERED
+    # PID-004B Workshop UI enablement (migration 0010): the SCOUT
+    # scout_discoveries.id this candidate originated from, if any -- optional,
+    # since a candidate may still originate with no discovery (PID-004
+    # sec4.2: "a later combination/derivation of candidates; another
+    # governed source"). See StrategyCandidateRepository.get_or_create_for_discovery
+    # for the idempotent-per-discovery creation path this backs.
+    origin_discovery_id: str | None = None
     created_at_utc: datetime | None = None
     updated_at_utc: datetime | None = None
 
