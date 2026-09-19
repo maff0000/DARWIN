@@ -9,8 +9,14 @@ path (an existing database already migrated only through 0010, carrying
 real pre-existing Workshop data, gains 0011 cleanly on a second
 `run_migrations` call, with that pre-existing data completely unaffected);
 the structural class<->category CHECK constraint (a raw SQL INSERT); the
-widened `workshop_questions.origin` CHECK; and the
-`trg_mendel_proposals_content_immutable` trigger.
+widened `workshop_questions.origin` CHECK; the
+`trg_mendel_proposals_content_immutable` trigger; and (PID-004C closure
+hardening item 3 / Auditor Finding B fix) the
+`trg_workshop_questions_content_immutable` trigger -- these structural
+proofs run under the ordinary `pg_config` test role; the REAL restricted
+`darwin_app` role proof (the Auditor's own reproduction, under the actual
+production-shaped privilege boundary) lives in
+tests/integration/test_workshop_questions_immutability.py.
 """
 from __future__ import annotations
 
@@ -26,7 +32,9 @@ from darwin.core.config import PostgresConfig
 from darwin.core.identities import new_id
 from darwin.research_store.db import connection
 from darwin.research_store.migrations import migration_state, run_migrations
+from darwin.specification.provenance import RuleOrigin
 from darwin.workshop import mendel_service, service
+from darwin.workshop.domain import QuestionStatus
 from darwin.workshop.mendel_adapter import (
     DeterministicTestMendelAdapter,
     MendelInvocationResult,
@@ -260,3 +268,90 @@ def test_mendel_proposals_content_immutability_trigger_permits_status_transition
         proposal = mendel_service.list_proposals(conn, workshop.workshop_id)[0]
         accepted = mendel_service.accept_proposal(conn, workshop.workshop_id, proposal.proposal_id, actor="matt")
         assert accepted.status.value == "ACCEPTED"
+
+
+# ============================================================================
+# PID-004C closure hardening item 3 (Auditor Finding B fix):
+# trg_workshop_questions_content_immutable -- structural proofs under the
+# ordinary `pg_config` role. The REAL restricted darwin_app role proof
+# (the Auditor's own reproduction) lives in
+# tests/integration/test_workshop_questions_immutability.py.
+# ============================================================================
+
+
+def _seed_mendel_question(conn) -> tuple:
+    """A real MENDEL-origin WorkshopQuestion, created via the actual
+    accept_proposal path (never a hand-rolled INSERT) -- the same
+    origin='MENDEL' row the Auditor's own reproduction targeted."""
+    workshop, _ = open_workshop_with_draft(conn)
+    adapter = DeterministicTestMendelAdapter(
+        result=MendelInvocationResult(proposals=(ask_question_proposal(),), reasoning_summary="x")
+    )
+    mendel_service.invoke_mendel(
+        conn, workshop.workshop_id, purpose=InvocationPurpose.REVIEW_DRAFT, focus_text=None, adapter=adapter,
+    )
+    proposal = mendel_service.list_proposals(conn, workshop.workshop_id)[0]
+    accepted = mendel_service.accept_proposal(conn, workshop.workshop_id, proposal.proposal_id, actor="matt")
+    questions = service.list_questions(conn, workshop.workshop_id)
+    question = next(q for q in questions if q.question_id == accepted.resulting_question_id)
+    assert question.origin.value == "MENDEL"
+    return workshop, question
+
+
+def test_workshop_questions_content_immutability_trigger_rejects_origin_laundering(pg_config):
+    with connection(pg_config) as conn:
+        _workshop, question = _seed_mendel_question(conn)
+        with pytest.raises(psycopg.errors.RaiseException), conn.cursor() as cur:
+            cur.execute(
+                "UPDATE workshop_questions SET origin = 'HUMAN' WHERE id = %s", (question.question_id,)
+            )
+        conn.rollback()
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("question_text", "'hacked?'"),
+        ("semantic_subject", "'hacked'"),
+        ("rationale", "'hacked rationale'"),
+    ],
+)
+def test_workshop_questions_content_immutability_trigger_rejects_substantive_rewrite(pg_config, column, value):
+    with connection(pg_config) as conn:
+        _workshop, question = _seed_mendel_question(conn)
+        with pytest.raises(psycopg.errors.RaiseException), conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE workshop_questions SET {column} = {value} WHERE id = %s", (question.question_id,)
+            )
+        conn.rollback()
+
+
+def test_workshop_questions_content_immutability_trigger_rejects_delete(pg_config):
+    with connection(pg_config) as conn:
+        _workshop, question = _seed_mendel_question(conn)
+        with pytest.raises(psycopg.errors.RaiseException), conn.cursor() as cur:
+            cur.execute("DELETE FROM workshop_questions WHERE id = %s", (question.question_id,))
+        conn.rollback()
+
+
+def test_workshop_questions_content_immutability_trigger_permits_legitimate_resolution(pg_config):
+    """Positive control: the real resolve_question lifecycle transition
+    (OPEN -> RESOLVED, resolved_at_utc + accepted_decision_id set) must
+    still succeed exactly as before the trigger was added."""
+    with connection(pg_config) as conn:
+        workshop, question = _seed_mendel_question(conn)
+        decision = service.create_decision(
+            conn, workshop.workshop_id, proposed_value={"note": "resolved via test"},
+            origin=RuleOrigin.USER_CLARIFICATION,
+            actor="matt", rationale="Resolving the MENDEL-raised question.",
+        )
+        resolved = service.resolve_question(
+            conn, workshop.workshop_id, question.question_id,
+            resolution=QuestionStatus.RESOLVED, accepted_decision_id=decision.decision_id,
+        )
+        assert resolved.status == QuestionStatus.RESOLVED
+        assert resolved.resolved_at_utc is not None
+        assert resolved.accepted_decision_id == decision.decision_id
+        # And origin/content survived untouched.
+        assert resolved.origin.value == "MENDEL"
+        assert resolved.question_text == question.question_text

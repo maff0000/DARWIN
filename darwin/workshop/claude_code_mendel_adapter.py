@@ -130,6 +130,17 @@ def _proposal_set_json_schema() -> dict:
                     "properties": {
                         "proposal_class": {"type": "string"},
                         "proposal_schema_version": {"type": "string"},
+                        # Deliberately NOT `additionalProperties: False` here (PID-004C
+                        # closure-hardening item 2, per the Architect's own instruction):
+                        # `payload`'s exact shape is per-class, and this schema is built
+                        # before the class is known at parse time, so it cannot itself
+                        # enforce the closed per-class key set. `darwin.workshop.
+                        # mendel_service._validate_payload_shape`'s
+                        # `PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS` closed-key-set check
+                        # remains the sole, authoritative "unknown fields fail closed"
+                        # enforcement, regardless of whether THIS provider-side JSON
+                        # Schema validation catches an unrecognised key or not -- never
+                        # bypassable by a provider that skips its own schema validation.
                         "payload": {"type": "object"},
                         "rationale": {"type": "string"},
                         "affected_semantic_paths": {"type": "array", "items": {"type": "string"}},

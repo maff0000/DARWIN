@@ -212,3 +212,68 @@ END $$;
 
 ALTER TABLE workshop_questions
     ADD CONSTRAINT workshop_questions_origin_check CHECK (origin IN ('HUMAN', 'MENDEL'));
+
+-- ============================================================================
+-- 4. workshop_questions content-immutability (PID-004C closure hardening
+--    item 3 / Auditor Finding B fix). This migration is still unmerged
+--    (only exists on this branch), so the fix belongs here rather than a
+--    new migration -- mirrors migration 0009's own
+--    reject_workshop_decision_content_mutation()/
+--    trg_workshop_decisions_content_immutable pattern, and this same
+--    migration's reject_mendel_proposal_content_mutation()/
+--    trg_mendel_proposals_content_immutable pattern, EXACTLY, just against
+--    workshop_questions' own column set.
+-- ============================================================================
+--
+-- Now that PID-004C introduces QuestionOrigin.MENDEL alongside the
+-- pre-existing HUMAN origin, with an explicit "origin never laundered to
+-- HUMAN" guarantee (darwin.workshop.mendel_service's own MENDEL-origin
+-- question creation), that guarantee needs a real DB-level backstop, not
+-- just application-code discipline -- an independent Auditor confirmed a
+-- raw `UPDATE workshop_questions SET origin='HUMAN' WHERE origin='MENDEL'`
+-- succeeded with no error before this trigger existed.
+--
+-- Immutable substantive columns: workshop_id, semantic_subject,
+-- question_text, rationale, origin, created_at_utc.
+-- Still-mutable lifecycle columns: status, resolved_at_utc,
+-- accepted_decision_id (darwin.workshop.service.resolve_question's own
+-- existing UPDATE path -- see tests/integration/test_workshop_questions_
+-- immutability.py's positive-control proof that this still works).
+-- DELETE remains forbidden, same as the other two trigger patterns.
+
+CREATE OR REPLACE FUNCTION reject_workshop_question_content_mutation() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'workshop_questions rows are append-only (PID-004C): DELETE on id=%',
+            OLD.id
+            USING ERRCODE = 'raise_exception';
+    END IF;
+
+    -- UPDATE: only status/resolved_at_utc/accepted_decision_id may ever
+    -- change. Any other column disagreeing between OLD and NEW -- origin
+    -- included, so a MENDEL-origin question can never be laundered to
+    -- HUMAN (or vice versa) by a raw UPDATE -- is a rewrite of
+    -- substantive question content, which never happens on an existing
+    -- row.
+    IF OLD.workshop_id IS DISTINCT FROM NEW.workshop_id
+        OR OLD.semantic_subject IS DISTINCT FROM NEW.semantic_subject
+        OR OLD.question_text IS DISTINCT FROM NEW.question_text
+        OR OLD.rationale IS DISTINCT FROM NEW.rationale
+        OR OLD.origin IS DISTINCT FROM NEW.origin
+        OR OLD.created_at_utc IS DISTINCT FROM NEW.created_at_utc
+    THEN
+        RAISE EXCEPTION
+            'workshop_questions content is immutable once inserted (PID-004C): only status/'
+            'resolved_at_utc/accepted_decision_id may change, on id=%',
+            OLD.id
+            USING ERRCODE = 'raise_exception';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_workshop_questions_content_immutable
+    BEFORE UPDATE OR DELETE ON workshop_questions
+    FOR EACH ROW EXECUTE FUNCTION reject_workshop_question_content_mutation();

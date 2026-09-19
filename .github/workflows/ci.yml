@@ -176,6 +176,7 @@ jobs:
           print(f"DARWIN_E2E_WORKSHOP_DATA_BLOCKED_ID={d['data_blocked_workshop_id']}")
           print(f"DARWIN_E2E_WORKSHOP_STALE_EDIT_ID={d['stale_edit_workshop_id']}")
           print(f"DARWIN_E2E_WORKSHOP_MENDEL_ID={d['mendel_workshop_id']}")
+          print(f"DARWIN_E2E_WORKSHOP_MENDEL_SCOUT_DISCOVERY_ID={d['mendel_scout_discovery_id']}")
           PYEOF
 
       - name: Start DARWIN_core against the seeded database (HERMES + Trader.dev deliberately unreachable — proves degraded-but-ready)

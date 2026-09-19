@@ -14,7 +14,12 @@ import { test, expect } from "@playwright/test";
 //     (PID-004B: seeded in its OWN dedicated section, deliberately never
 //     touched by this file's own mutating-actions block — see
 //     e2e/workshop.spec.ts, which owns it exclusively)
-// = 7 total, DISCOVERED-equivalent (NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION) = 6.
+//   - "E2E MENDEL+SCOUT Source — XAUUSD Range Break" — USER_DISCOVERED, NEW
+//     (PID-004C closure hardening item 1: seeded in its OWN dedicated
+//     section, deliberately never touched by this file's own
+//     mutating-actions block — see e2e/mendel.spec.ts, which owns it
+//     exclusively)
+// = 8 total, DISCOVERED-equivalent (NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION) = 7.
 //
 // The CI job also points mcp-api.trader.dev at an unreachable host for
 // every e2e container (same discipline degraded.spec.ts already documents
@@ -32,7 +37,7 @@ test.describe("Discovery list — SCOUT radar (read-only)", () => {
   test("renders real intake counts, source health, and the SOURCE_CLAIM leaderboard", async ({ page }) => {
     await page.goto("/discovery");
     await expect(page.getByRole("heading", { name: "Discovery" })).toBeVisible();
-    await expect(page.getByText("7 discovered")).toBeVisible();
+    await expect(page.getByText("8 discovered")).toBeVisible();
 
     // total + 5 intake-state stat cards, all real counts_by_intake_status
     await expect(page.locator(".stat-card")).toHaveCount(6);
@@ -134,7 +139,7 @@ test.describe("Pipeline reflects real SCOUT persistence", () => {
   test("DISCOVERED count matches NEW+SHORTLISTED+IN_WORKSHOP+READY_FOR_SPECIFICATION discoveries", async ({ page }) => {
     await page.goto("/pipeline");
     const discoveredCard = page.locator(".stat-card", { hasText: "DISCOVERED" });
-    await expect(discoveredCard.locator(".stat-card__value")).toHaveText("6");
+    await expect(discoveredCard.locator(".stat-card__value")).toHaveText("7");
   });
 });
 

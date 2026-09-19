@@ -436,19 +436,94 @@ assert set(_DRAFT_MUTATION_HANDLERS) == {
 }, "every DRAFT_MUTATING ProposalClass must have exactly one registered handler"
 
 
+# ============================================================================
+# PID-004C CLOSURE HARDENING item 2 (Auditor Finding A fix): the exact,
+# closed top-level payload key set for EVERY one of the nine ProposalClass
+# members -- ASK_QUESTION and MATERIAL_CONCERN included, not only the seven
+# DRAFT_MUTATING classes that already had a dry-run handler check. A
+# payload key outside its class's set is refused BEFORE persistence
+# (`_validate_payload_shape` below), never silently ignored by a handler
+# that only ever read its own named keys.
+#
+# Each set below mirrors EXACTLY what that class's current handler (or, for
+# ASK_QUESTION, `_question_subject`/`_question_text`) already legitimately
+# reads -- this is closure of the "reject anything else" gap, never an
+# addition or removal of functional capability. Mirrors
+# `PROPOSAL_CLASS_CATEGORY`'s own "single source of truth, asserted
+# exhaustive" discipline (mendel_domain.py).
+# ============================================================================
+
+PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS: dict[ProposalClass, frozenset[str]] = {
+    # QUESTION category -- darwin.workshop.mendel_service._question_subject/
+    # _question_text's own current `payload.get(...)` reads.
+    ProposalClass.ASK_QUESTION: frozenset({"semantic_subject", "question_text"}),
+    # ADVISORY category -- nothing currently reads MATERIAL_CONCERN's
+    # payload by key (it is persisted whole as a WorkshopDecision's
+    # proposed_value), so this defines the minimal sensible schema already
+    # illustrated by darwin.workshop.api._E2E_FIXTURE_PROPOSALS and
+    # tests/fixtures/mendel.py's material_concern_proposal().
+    ProposalClass.MATERIAL_CONCERN: frozenset({"concern"}),
+    # DRAFT_MUTATING -- one entry per _DRAFT_MUTATION_HANDLERS handler,
+    # matching its exact current payload[...]/payload.get(...) reads.
+    ProposalClass.SEMANTIC_CHANGE: frozenset({"composition"}),
+    ProposalClass.PARAMETER_CHANGE: frozenset({"parameter_id", "value_type", "unit", "fixed_value"}),
+    ProposalClass.DATA_REQUIREMENT: frozenset({
+        "requirement_id", "display_name", "fact_class", "fact_reference_kind", "authority_class",
+        "instrument_applicability", "timeframe", "required_historical_depth", "units",
+        "required_fields", "causal_timing_policy", "mandatory",
+    }),
+    ProposalClass.THESIS_CHANGE: frozenset({"new_thesis"}),
+    # `authorized_search_envelope` IS one of this handler's current reads
+    # (`payload.get("authorized_search_envelope")`) -- it exists solely so
+    # the handler can explicitly refuse a truthy value with its own
+    # narrower-first-pass message; excluding it here would just replace
+    # that specific, informative message with the generic "unrecognised
+    # key" one for no functional gain, so it stays in the allowed set.
+    ProposalClass.POLICY_CLASSIFICATION: frozenset(
+        {"policy_class", "compatibility", "notes", "authorized_search_envelope"}
+    ),
+    ProposalClass.INSTRUMENT_CLARIFICATION: frozenset({"kind", "instrument_ids", "generic_criteria"}),
+    ProposalClass.TIMEFRAME_CLARIFICATION: frozenset(
+        {"iana_timezone", "local_start", "local_end", "weekdays", "cross_midnight"}
+    ),
+}
+
+assert set(PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS) == set(ProposalClass), (
+    "PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS must cover every ProposalClass member -- a class with no "
+    "closed key set is a structural bug, never a legitimate 'unrestricted' state (PID-004C closure "
+    "hardening item 2)"
+)
+
+
 def _validate_payload_shape(proposal_class: ProposalClass, payload: dict) -> None:
     """PID-004C sec18's "validate the typed payload shape for its class"
     step, run BEFORE persistence at invoke_mendel time (not just at
     acceptance time) -- so a malformed proposal is refused up front,
-    never merely discovered later when a human tries to accept it. For
-    DRAFT_MUTATING classes this dry-runs the real handler against a
-    disposable, minimal in-memory draft; a payload that fails construction
-    fails validation identically to a payload that would fail at
-    acceptance time -- there is exactly one shape-checking code path, not
-    two that could drift apart.
+    never merely discovered later when a human tries to accept it.
+
+    Two checks, in order, for EVERY class (not only DRAFT_MUTATING ones):
+    1. Closed top-level key set (PID-004C closure hardening item 2 /
+       Auditor Finding A): any key outside `PROPOSAL_CLASS_ALLOWED_
+       PAYLOAD_KEYS[proposal_class]` fails validation immediately, with
+       the unrecognised key(s) named in the error -- never silently
+       dropped, never preserved as inert extra JSON, never passed through
+       to a handler that would just ignore it.
+    2. For DRAFT_MUTATING classes only, dry-runs the real handler against
+       a disposable, minimal in-memory draft; a payload that fails
+       construction fails validation identically to a payload that would
+       fail at acceptance time -- there is exactly one shape-checking code
+       path, not two that could drift apart.
     """
     if not isinstance(payload, dict):
         raise MendelOutputValidationError(f"payload for {proposal_class.value} must be a JSON object")
+    allowed_keys = PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS[proposal_class]
+    unrecognised = set(payload) - allowed_keys
+    if unrecognised:
+        raise MendelOutputValidationError(
+            f"payload for {proposal_class.value} contains unrecognised key(s) "
+            f"{sorted(unrecognised)!r} -- only {sorted(allowed_keys)!r} are accepted for this class "
+            f"(closed payload shape, PID-004C closure hardening item 2: unknown fields fail closed)"
+        )
     category = category_for_class(proposal_class)
     if category != ProposalCategory.DRAFT_MUTATING:
         return

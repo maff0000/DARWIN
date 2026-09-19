@@ -27,6 +27,7 @@ import { test, expect } from "@playwright/test";
 
 const DIR = "screenshots";
 const MENDEL_WORKSHOP_ID = process.env.DARWIN_E2E_WORKSHOP_MENDEL_ID ?? "";
+const MENDEL_SCOUT_DISCOVERY_ID = process.env.DARWIN_E2E_WORKSHOP_MENDEL_SCOUT_DISCOVERY_ID ?? "";
 
 test.skip(
   !MENDEL_WORKSHOP_ID,
@@ -194,5 +195,86 @@ test.describe("PID-004C MENDEL panel — real invoke/accept/reject/stale round t
     await expect(secondParamCard.getByRole("button", { name: "Accept" })).toBeDisabled();
     await secondParamCard.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${DIR}/mendel-05-proposal-stale-accept-disabled.png`, fullPage: true });
+  });
+});
+
+// PID-004C CLOSURE HARDENING item 1 -- real SCOUT-Discovery-rooted
+// vertical slice, browser layer. Every OTHER test above opens against
+// `mendel_workshop_id` -- a bare StrategyCandidate/Workshop with no SCOUT
+// Discovery linked at all. THIS block opens a Workshop LIVE, through the
+// real "Open Workshop" click on a real Discovery page (mirrors
+// e2e/workshop.spec.ts's own scenario-1 discipline exactly: the discovery
+// alone is pre-seeded by seed.py; the candidate/Workshop are created live
+// via the real API during the test, never pre-seeded or constructed
+// client-side), then shows -- through the real UI, reusing the existing
+// SourcePanel/SpecificationPanel components (PID-004B's own, never a new
+// component built for this) -- the real raw SCOUT source text ("XAUUSD")
+// and the draft's separately-governed canonical instrument applicability
+// ("XAU_USD") as two visually distinct facts, never one derived from the
+// other. A live MENDEL invocation against this exact real, SCOUT-linked
+// Workshop then proves the whole chain runs end to end through the real
+// UI, not just the backend integration suite.
+test.describe("PID-004C item 1 — real SCOUT-linked MENDEL vertical slice (browser)", () => {
+  test.skip(
+    !MENDEL_SCOUT_DISCOVERY_ID,
+    "MENDEL+SCOUT discovery fixture id was not exported (DARWIN_E2E_WORKSHOP_MENDEL_SCOUT_DISCOVERY_ID).",
+  );
+
+  test("opens live from a real XAUUSD Discovery, shows raw source text distinct from canonical instrument applicability, then a live MENDEL invocation runs against it", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1100 });
+
+    const beforeDiscoveryResp = await page.request.get(`/api/v1/scout/discoveries/${MENDEL_SCOUT_DISCOVERY_ID}`);
+    const beforeDiscovery = (await beforeDiscoveryResp.json()).discovery;
+    expect(beforeDiscovery.source_symbol).toBe("XAUUSD");
+
+    // Real Discovery page -> real "Open Workshop" click -> a genuinely
+    // new candidate+Workshop, created live via the real API, linked to
+    // this real Discovery (never pre-seeded).
+    await page.goto(`/discovery/${MENDEL_SCOUT_DISCOVERY_ID}`);
+    await expect(page.getByRole("heading", { name: "E2E MENDEL+SCOUT Source — XAUUSD Range Break" })).toBeVisible();
+    await page.getByRole("button", { name: "Open Workshop" }).click();
+    await expect(page).toHaveURL(/\/workshops\/[a-f0-9-]+$/);
+    const scoutMendelWorkshopId = page.url().split("/workshops/")[1];
+
+    // --- The SOURCE panel shows the real, raw, uninterpreted SCOUT
+    // source text -- "XAUUSD" -- explicitly labelled as such.
+    await expect(page.locator(".workshop-raw-symbol", { hasText: "XAUUSD" })).toBeVisible();
+    await page.screenshot({ path: `${DIR}/mendel-06-scout-source-raw-symbol.png`, fullPage: true });
+
+    // --- Set the draft's CANONICAL instrument applicability through the
+    // real authoring UI (PID-004B: never client-side-only) -- a
+    // deliberately DIFFERENT, separately-governed value ("XAU_USD") from
+    // the raw source string ("XAUUSD") above, never auto-derived from it.
+    await page.locator('option[value="XAU_USD"]').first().waitFor({ state: "attached" });
+    await page.getByLabel("Instrument", { exact: false }).selectOption("XAU_USD");
+    await page.getByRole("button", { name: "Save specification" }).click();
+
+    // Both facts visible on the SAME page, at the SAME time, as two
+    // distinct DOM elements -- the raw source symbol never changed to
+    // match the canonical id, and vice versa.
+    await expect(page.locator(".workshop-raw-symbol", { hasText: "XAUUSD" })).toBeVisible();
+    await expect(page.getByLabel("Instrument", { exact: false })).toHaveValue("XAU_USD");
+    await page.screenshot({ path: `${DIR}/mendel-07-raw-symbol-vs-canonical-applicability.png`, fullPage: true });
+
+    // --- A live MENDEL invocation against this exact real, SCOUT-linked
+    // Workshop -- proving the full chain (real Discovery -> real
+    // Workshop -> real MENDEL invoke) runs end to end through the real UI.
+    await expect(page.getByRole("heading", { name: /MENDEL Assistant/ })).toBeVisible();
+    await page.getByRole("button", { name: "Invoke MENDEL" }).click();
+    await expect(page.locator(".mendel-reasoning-summary")).toBeVisible();
+    await expect(page.locator(".mendel-proposal-list li").first()).toBeVisible();
+    await page.screenshot({ path: `${DIR}/mendel-08-scout-linked-invocation-succeeded.png`, fullPage: true });
+
+    // --- No source mutation: the underlying SCOUT discovery row is
+    // genuinely untouched by any of the above.
+    const afterDiscoveryResp = await page.request.get(`/api/v1/scout/discoveries/${MENDEL_SCOUT_DISCOVERY_ID}`);
+    const afterDiscovery = (await afterDiscoveryResp.json()).discovery;
+    expect(afterDiscovery).toEqual(beforeDiscovery);
+
+    // Sanity: this really is a fresh Workshop, not the pre-seeded
+    // `mendel_workshop_id` fixture the tests above use.
+    expect(scoutMendelWorkshopId).not.toBe(MENDEL_WORKSHOP_ID);
   });
 });
