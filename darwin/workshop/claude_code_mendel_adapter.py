@@ -23,12 +23,18 @@ Zero-tool boundary (PID-004C sec11.3) is UNCONDITIONAL: `_ZERO_TOOL_ARGS`
 below is spliced into every single invocation this module ever makes --
 there is no code path, flag, constructor argument, or "debug mode" here
 that can build a `claude` invocation without it. The verified flag set
-(re-confirmed live against `claude --help` on this exact host, 2026-09-19,
-CLI version 2.1.273):
+(re-confirmed live against the real, running `claude` binary on this
+exact host, 2026-09-19, CLI version 2.1.273 -- NOT merely `claude
+--help`'s own text, which the Architect correctly noted does not list
+every supported flag; `--max-turns` is a real, accepted flag despite
+being absent from `--help`, confirmed by actually running the CLI with
+it and observing clean argument parsing followed by the real auth check,
+never an "unknown option" error):
 
     claude --model <pinned> -p <rendered prompt>
            --restricted --tools "" --disallowedTools "mcp__*"
            --strict-mcp-config --permission-prompts none --safe-mode
+           --max-turns 1
            --output-format json --json-schema <schema>
            --no-session-persistence
 
@@ -64,20 +70,32 @@ present in the parent, never merely left unset, so MENDEL can never be
 silently redirected onto a different auth/billing path by whatever
 happens to be ambient in `darwin_core`'s own process environment.
 
-Boundedness: `--max-turns` does not exist in this CLI version (verified
-directly against a full, real `claude --help` on this host, 2026-09-19 --
-no such flag, and no equivalent for bounding agentic "turns"). This is
-not a gap this adapter needs to fill: `-p` (print mode) combined with
-`--tools ""` (no tool exists that could trigger a follow-up turn)
-structurally produces exactly one model response and exits -- there is
-no autonomous loop, no retry, no recursive call anywhere in this
-adapter's own code. `DEFAULT_TIMEOUT_SECONDS`, enforced by
-`subprocess.run`'s own `timeout=` via `run_subprocess_with_timeout`, is
-therefore the actual (and sufficient) bounding mechanism for a single
-invocation -- not a bare hope, a real OS-level kill. `--max-budget-usd`
-(API-metered spending) has been removed for the same reason it no longer
-fits: it describes per-call dollar spend against a metered API key, which
-does not exist in a subscription-backed architecture.
+Boundedness (corrected 2026-09-19): an earlier pass wrongly concluded
+`--max-turns` did not exist, reasoning from its absence in `claude
+--help`'s printed text alone -- the Architect corrected this: help-text
+absence is not evidence of flag absence. Empirically confirmed instead:
+`claude -p '...' --max-turns 1 ...` on this exact host's real, installed
+CLI proceeds cleanly past argument parsing into the real (auth) failure
+path -- never an "unknown option" error -- proving the flag is genuinely
+accepted. `--max-turns 1` is therefore spliced into `_ZERO_TOOL_ARGS`
+unconditionally, as the primary, explicit bound on agentic turns. It is
+belt-and-braces alongside the structural argument that MENDEL's
+invocation is already single-shot regardless (`-p` print mode combined
+with `--tools ""` means no tool exists that could trigger a follow-up
+turn in the first place) -- there is no autonomous loop, no retry, no
+recursive call anywhere in this adapter's own code either way.
+`DEFAULT_TIMEOUT_SECONDS`, enforced by `subprocess.run`'s own `timeout=`
+via `run_subprocess_with_timeout`, remains the real OS-level backstop on
+top of both. `--max-budget-usd` (API-metered spending) remains removed:
+it describes per-call dollar spend against a metered API key, which does
+not exist in a subscription-backed architecture -- that removal is
+unaffected by this `--max-turns` correction.
+
+Only raise `--max-turns` above 1 if a real, successful, subscription-
+authenticated invocation demonstrates that Claude Code's structured-
+output mechanism genuinely requires more than one turn to produce a
+valid response -- and record the specific reason at the point that
+happens. Do not raise it speculatively.
 
 Output handling: this module's ONLY responsibility is turning "real CLI
 output" into the SAME loosely-typed `RawMendelProposal`/
@@ -107,12 +125,14 @@ from darwin.workshop.mendel_errors import MendelAdapterTimeoutError
 
 logger = logging.getLogger(__name__)
 
-#: PID-004C sec11.3 -- the unconditional zero-model-exposed-tool flag set.
-#: Spliced into EVERY invocation this module makes; never optional, never
-#: conditionally omitted. See module docstring for the reasoning behind
-#: each token, including the 2026-09-19 auth-architecture correction
-#: (`--bare` removed, `--safe-mode` added) and the `--disallowedTools
-#: "mcp__*"` defence-in-depth addition.
+#: PID-004C sec11.3 -- the unconditional zero-model-exposed-tool flag set,
+#: plus the explicit turn bound. Spliced into EVERY invocation this module
+#: makes; never optional, never conditionally omitted. See module
+#: docstring for the reasoning behind each token, including the
+#: 2026-09-19 auth-architecture correction (`--bare` removed, `--safe-mode`
+#: added), the `--disallowedTools "mcp__*"` defence-in-depth addition, and
+#: the `--max-turns 1` correction (empirically confirmed accepted despite
+#: being absent from `claude --help`'s own printed text).
 _ZERO_TOOL_ARGS: tuple[str, ...] = (
     "--restricted",
     "--tools",
@@ -123,6 +143,8 @@ _ZERO_TOOL_ARGS: tuple[str, ...] = (
     "--permission-prompts",
     "none",
     "--safe-mode",
+    "--max-turns",
+    "1",
 )
 
 #: A pinned, specific model name (never a bare alias like "sonnet" --
@@ -133,12 +155,13 @@ DEFAULT_MODEL = "claude-sonnet-5"
 
 #: A finite, bounded per-invocation timeout (PID-004C sec11.1: "no
 #: unconstrained autonomous loop"), enforced by `subprocess.run`'s own
-#: `timeout=` mechanism (PID-004C WP2 brief: "not a bare hope"). With
-#: `--max-turns` unavailable in this CLI version and `--max-budget-usd`
-#: architecturally wrong for a subscription-backed provider, this is now
-#: the SOLE explicit bound on a single invocation -- sufficient because
-#: `-p`/`--tools ""` already make the invocation structurally single-shot
-#: (see module docstring's "Boundedness" section).
+#: `timeout=` mechanism (PID-004C WP2 brief: "not a bare hope"). Alongside
+#: `--max-turns 1` (in `_ZERO_TOOL_ARGS`) this gives two independent
+#: bounds on a single invocation: the CLI's own turn ceiling, and this
+#: real OS-level kill as the backstop regardless of what the CLI itself
+#: does. `--max-budget-usd` remains architecturally wrong for a
+#: subscription-backed provider and stays removed (see module docstring's
+#: "Boundedness" section).
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 #: Env vars Claude Code's own documented auth precedence lets override
