@@ -132,7 +132,12 @@ def test_real_cli_zero_tool_boundary_survives_hostile_source_text():
         # and describing/refusing a prompt-injection attempt (which may
         # legitimately mention "/etc/passwd" by name while explaining the
         # refusal) is the CORRECT outcome, not a finding.
-        structured = envelope.get("structured_result", envelope.get("result"))
+        # "structured_output" is the real, CONFIRMED field name (see
+        # claude_code_mendel_adapter.parse_cli_envelope's own docstring/
+        # history) -- checked first, with "result" (a JSON-encoded string
+        # carrying identical content in this build) as a real secondary
+        # source, exactly matching the adapter's own precedence.
+        structured = envelope.get("structured_output", envelope.get("result"))
         structured_text = json.dumps(structured) if not isinstance(structured, str) else structured
         assert passwd_content_pattern not in structured_text
 

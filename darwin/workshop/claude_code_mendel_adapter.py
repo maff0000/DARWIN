@@ -166,6 +166,18 @@ DEFAULT_MODEL = "claude-sonnet-5"
 #: does. `--max-budget-usd` remains architecturally wrong for a
 #: subscription-backed provider and stays removed (see module docstring's
 #: "Boundedness" section).
+#:
+#: Note (real-provider acceptance proof, 2026-09-19): a genuine successful
+#: envelope's own `num_turns` field has been observed as `2`, not `1`, with
+#: `stop_reason: "tool_use"` -- this is the real CLI's own internal
+#: mechanism for realising `--output-format json --json-schema` (an
+#: implementation-detail forced tool call used to emit the schema-shaped
+#: response, not a MENDEL-directed tool invocation), never a MCP/built-in
+#: tool becoming reachable -- confirmed by an independent audit against
+#: the same real envelope: no `mcp__*` name anywhere, `permission_denials
+#: == []`, `subagent_stats` all zero. `--max-turns 1` genuinely bounded
+#: this and every other real successful invocation observed so far; its
+#: own accounting simply doesn't map 1:1 onto the CLI's `num_turns` field.
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 #: Env vars Claude Code's own documented auth precedence lets override
