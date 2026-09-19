@@ -6,6 +6,23 @@
 
 **Governing current-DARWIN doctrine applied to every finding below** (already settled by Central Architecture — not re-litigated here, only checked against): DIKE is not position sizing (WO §9); no legacy self-adaptation is automatically portable, and any found is classified REJECT/REARCHITECT (WO §13); `DIKE_DISABLED` is a legitimate research baseline only, never "approved for unguarded live trading" (WO §11); a separate live-enforcement authority (TRON) is sovereign over live account safety and legacy code must never be read as the research/backtest layer owning it (WO §12).
 
+## Canonical-source ruling (Central Architecture, 2026-09-19)
+
+```text
+DIKE_LEGACY_CANONICAL_SOURCE = NONE
+ARCHAEOLOGY_STATUS = COMPLETE
+```
+
+Six independent, deliberately-isolated legacy DIKE implementations were positively identified (item 1
+below) — this is a completed structural finding, not an unresolved or missing investigation. No canonical
+implementation exists, and none was guessed: all six were read and classified individually, and
+`proteus/dike/processor.py`'s self-described "canonical shared" status was explicitly examined and rejected
+as a stale governance-drift artefact (item 8), not assumed authoritative for convenience. Remediating that
+drift inside legacy `tradingProteus` is out of scope for DARWIN PID-005 (see item 8's closing note); its
+value here is evidentiary only — proof that a self-declared "canonical" DIKE source can drift stale despite
+its own claim, which is itself an argument for PID-005 not anointing any single legacy file as authoritative
+either.
+
 ## Summary table
 
 | # | Concept / component | Classification | Key evidence |
@@ -24,7 +41,7 @@
 | 12 | `neo/neo_desk/capture/dike.py` | REUSE | Confirmed passive, append-only observation hook (`capture_dike_snapshot()` — hash + `INSERT IGNORE` dedup, zero decision/gate/sizing logic). Safe pattern for a DARWIN observation layer. |
 | 13 | `WO-DIKE-STACK-001` regime-aware stacking + denylist test | ADAPT (pattern) | Added `non_trend_max_positions` cap plus a contract test explicitly forbidding raw `market_state` use inside gate logic (only a precomputed `dike_trend_safe` boolean is permitted) — a genuine anti-self-adaptation safeguard pattern worth carrying forward. |
 | 14 | `WO-DIKE-DISCOVERY-MODE-0001` → `WO-DIKE-MATURE-0001` pair | REUSE (process pattern) | Demonstrates a correct human-gated, evidence-based, paper-scoped `DIKE_DISABLED`-equivalent → re-enable workflow, with documented rollback SQL — matches current doctrine's "research baseline only" rule exactly; not runtime self-mutation. |
-| 15 | iOS CDN payload (`dike/ios_publisher.py`) | UNKNOWN — flagged gap | Backend-confirmed sizing-shaped (`lot_multiplier`, `loss_streak_multiplier`, `recovery_size_multiplier` published to `mt.noust.ai/decisions/settings/settings.json`); whether the Swift-side consumer (`DikeSettingsService.swift`, unread — outside this archaeology's repo scope) treats these as sizing or gating was not verified. |
+| 15 | iOS CDN payload (`dike/ios_publisher.py`) | OUT OF PID-005 SCOPE — legacy context/debt only (Central Architecture ruling) | Backend-confirmed sizing-shaped (`lot_multiplier`, `loss_streak_multiplier`, `recovery_size_multiplier` published to `mt.noust.ai/decisions/settings/settings.json`); the Swift-side consumer was not read and will not be — this is a live-system/sizing concern, not required to build ATHENA, and is retained here only as legacy-system context, not as an open question blocking or informing PID-005. |
 | 16 | Learned/self-adaptation | CONFIRMED ABSENT everywhere read | No code path in any of the 6 implementations mutates its own `DikeConfig`/thresholds from live-observed outcomes; all parameter changes found were human-authored, evidence-based Work Orders (item 14), never runtime self-mutation. |
 
 ## Detailed findings
@@ -55,7 +72,7 @@ Critically, this archaeology **corrects the brief's own background assumption**:
 
 ### 8. `proteus/dike/processor.py` — a documented isolation-doctrine violation
 
-612 lines, full-read. Its own docstring states: "Canonical DIKE Guardrails Processor. Extracted from `apollov4/dike_config_processor.py`... Shared by: ApolloV4, Tyche, MorpheusV4." This directly contradicts `EPIC-DIKE-002.md`'s `forbidden_services: [zeusv3, apollo, zeus, tyche]` and `WO-0246-DIKE-PROCESSOR-RECREATE.md`'s explicit forbidden-directories list naming `tradingProteus/dike/*` "reference only, DO NOT MODIFY." Content is near-identical to `apollov4/dike_config_processor.py` but is a **stale snapshot** — it lacks the `non_trend_max_positions` regime-aware cap and `dike_trend_safe`/`market_state_for_audit` parameters that `WO-DIKE-STACK-001` (2026-02-12) added to both of its claimed source implementations, meaning this "canonical shared" extraction was never kept in sync with either divergent original it claims to unify. It additionally contains its own `get_lot_size()` sizing method (item 4) and a 2-value `DikeAction(ALLOW, REJECT)` enum, distinct from `dike/evaluator.py`'s 4-value `ALLOW/REDUCE_SIZE/REJECT/CLOSE_ONLY`. **Do not treat this file as architecturally authoritative for any DARWIN migration** — it is evidence of a governance breach and a drift artifact, not a clean shared abstraction.
+612 lines, full-read. Its own docstring states: "Canonical DIKE Guardrails Processor. Extracted from `apollov4/dike_config_processor.py`... Shared by: ApolloV4, Tyche, MorpheusV4." This directly contradicts `EPIC-DIKE-002.md`'s `forbidden_services: [zeusv3, apollo, zeus, tyche]` and `WO-0246-DIKE-PROCESSOR-RECREATE.md`'s explicit forbidden-directories list naming `tradingProteus/dike/*` "reference only, DO NOT MODIFY." Content is near-identical to `apollov4/dike_config_processor.py` but is a **stale snapshot** — it lacks the `non_trend_max_positions` regime-aware cap and `dike_trend_safe`/`market_state_for_audit` parameters that `WO-DIKE-STACK-001` (2026-02-12) added to both of its claimed source implementations, meaning this "canonical shared" extraction was never kept in sync with either divergent original it claims to unify. It additionally contains its own `get_lot_size()` sizing method (item 4) and a 2-value `DikeAction(ALLOW, REJECT)` enum, distinct from `dike/evaluator.py`'s 4-value `ALLOW/REDUCE_SIZE/REJECT/CLOSE_ONLY`. **Do not treat this file as architecturally authoritative for any DARWIN migration** — it is evidence of a governance breach and a drift artifact, not a clean shared abstraction. **Central Architecture ruling:** remediating this legacy `tradingProteus`-side drift is out of scope for DARWIN PID-005; no remediation Work Order is launched from this archaeology. Its only role here is evidentiary — proof that a self-declared "canonical/shared" DIKE source can drift stale despite its own claim, directly supporting the canonical-source ruling above (no single legacy DIKE implementation is authoritative).
 
 ### 10–12. Clean, reusable components
 
@@ -67,7 +84,7 @@ Critically, this archaeology **corrects the brief's own background assumption**:
 
 ### 15. iOS CDN sizing payload — a genuine open gap
 
-`dike/ios_publisher.py` (339 lines, full file) builds an `IOSRiskProfile` payload per LOW/MEDIUM/HIGH risk tier containing `lot_multiplier`, `loss_streak_multiplier`, `recovery_size_multiplier` (lines 54-64), published via SFTP/CDN to `https://mt.noust.ai/decisions/settings/settings.json` for iOS Morpheus consumption. The payload shape is unambiguously sizing-shaped on the backend side. Whether the Swift-side consumer applies these values as position-sizing multipliers or as some gating-adjacent behaviour was **not verified** — the Swift code lives outside the `tradingProteus` Python tree and was out of scope for this pass. This is flagged as an explicit open question (see the boundary/recommendations document) rather than assumed either way.
+`dike/ios_publisher.py` (339 lines, full file) builds an `IOSRiskProfile` payload per LOW/MEDIUM/HIGH risk tier containing `lot_multiplier`, `loss_streak_multiplier`, `recovery_size_multiplier` (lines 54-64), published via SFTP/CDN to `https://mt.noust.ai/decisions/settings/settings.json` for iOS Morpheus consumption. The payload shape is unambiguously sizing-shaped on the backend side. **Central Architecture ruling: this is out of PID-005 scope** — it is a live-system/sizing concern (likely TRON/Morpheus's), not required to build ATHENA. No Swift-side archaeology will be performed; this finding is retained purely as legacy-system context/debt, not as an open question requiring resolution before PID-005.
 
 ### 16. No learned/self-adaptation found anywhere
 
