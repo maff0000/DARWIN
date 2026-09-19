@@ -314,10 +314,17 @@ def test_parse_cli_envelope_happy_path_result_as_object():
     assert proposal.affected_semantic_paths == ("x.y",)
 
 
-def test_parse_cli_envelope_happy_path_structured_result_key():
+def test_parse_cli_envelope_happy_path_structured_output_key_takes_priority():
+    """`structured_output` is the REAL, CONFIRMED field name for the real
+    CLI's own schema-validated response object (PID-004C real-provider
+    acceptance proof, 2026-09-19, CLI v2.1.273 -- a genuine authenticated
+    success envelope was observed with this exact key, an object, while
+    `result` simultaneously carried the identical content as a JSON
+    string). This test also proves `structured_output` is checked FIRST,
+    ahead of `result`, when both are present."""
     envelope = (
-        '{"is_error": false, "result": "a plain text summary", '
-        '"structured_result": {"proposals": [], "reasoning_summary": "no changes needed"}}'
+        '{"is_error": false, "result": "a plain text summary that must be ignored", '
+        '"structured_output": {"proposals": [], "reasoning_summary": "no changes needed"}}'
     )
     result = parse_cli_envelope(envelope, returncode=0, stderr="")
     assert result.proposals == ()
@@ -437,12 +444,28 @@ def test_adapter_auth_status_delegates_to_the_module_level_diagnostic(fake_claud
 @pytest.mark.skipif(shutil.which("claude") is None, reason="no real `claude` CLI on PATH")
 def test_get_claude_auth_status_reports_honestly_against_the_real_cli():
     """Real proof against the actual installed `claude` binary on this
-    host. As of 2026-09-19 there is no active Claude Code subscription/
-    OAuth login for this user -- the diagnostic must report that
-    honestly, never fabricate a logged-in state."""
+    host. Auth-state agnostic by design (2026-09-19): whichever real
+    login state this host actually has -- none, or a genuine Claude Code
+    subscription/OAuth login -- the diagnostic must report it honestly,
+    never fabricate a state that doesn't match what `claude auth status`
+    itself reports. Internal consistency (never one specific hardcoded
+    state) is what this test proves."""
     status = get_claude_auth_status("claude")
     assert status["cli_installed"] is True
     assert isinstance(status["cli_version"], str) and status["cli_version"]
-    assert status["authenticated"] is False
-    assert status["auth_method"] in ("none", None)
-    assert status["api_key_active"] is False
+    assert isinstance(status["authenticated"], bool)
+    assert isinstance(status["api_key_active"], bool)
+    # api_key_active is defined as True only for a CLI-reported "apiKey"
+    # auth method -- never true merely because some env var happens to be
+    # set (this diagnostic reflects the CLI's own resolved state, not
+    # this process's ambient environment).
+    assert status["api_key_active"] == (status["auth_method"] == "apiKey")
+    if status["authenticated"]:
+        # A genuine login must report a real, non-empty auth method --
+        # never "authenticated" with no explanation of how.
+        assert status["auth_method"] not in (None, "none", "")
+        assert status["api_key_active"] is False, (
+            "PID-004C requires Claude Code subscription/OAuth auth, never an API-key auth method"
+        )
+    else:
+        assert status["auth_method"] in ("none", None)

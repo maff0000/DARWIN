@@ -120,8 +120,12 @@ from darwin.workshop.mendel_adapter import (
     MendelInvocationResult,
     RawMendelProposal,
 )
-from darwin.workshop.mendel_domain import InvocationPurpose
+from darwin.workshop.mendel_domain import InvocationPurpose, ProposalClass
 from darwin.workshop.mendel_errors import MendelAdapterTimeoutError
+from darwin.workshop.mendel_service import PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS
+from darwin.workshop.mendel_service import (
+    PROPOSAL_SCHEMA_VERSION as _PROPOSAL_SCHEMA_VERSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,15 +183,58 @@ _SCRUBBED_ENV_VARS: tuple[str, ...] = (
 )
 
 
+def _payload_key_restriction_blocks() -> list[dict]:
+    """One `if`/`then` JSON Schema block per `ProposalClass`, restricting
+    `payload` to exactly that class's allowed top-level keys. Built
+    directly FROM `mendel_service.PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS` --
+    never a hand-duplicated second list that could silently drift out of
+    sync with the real, authoritative closed-key-set DARWIN itself
+    enforces. Defence-in-depth/practical robustness only (PID-004C
+    real-provider acceptance proof, 2026-09-19: the third real,
+    authenticated invocation guessed plausible-but-wrong payload keys for
+    ASK_QUESTION -- "context"/"question" instead of "semantic_subject"/
+    "question_text" -- which `mendel_service._validate_payload_shape`
+    correctly rejected, fail closed, zero proposals persisted). That
+    function remains the sole AUTHORITATIVE gate regardless of whether
+    this schema is honoured, bypassed, or ignored by a future provider.
+    """
+    return [
+        {
+            "if": {
+                "required": ["proposal_class"],
+                "properties": {"proposal_class": {"const": proposal_class.value}},
+            },
+            "then": {
+                "properties": {
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {key: {} for key in sorted(allowed_keys)},
+                    },
+                },
+            },
+        }
+        for proposal_class, allowed_keys in PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS.items()
+    ]
+
+
 def _proposal_set_json_schema() -> dict:
     """The `--json-schema` this adapter always passes -- shaped exactly to
     what `RawMendelProposal`/`MendelInvocationResult` need (PID-004C
     sec6.5: "structured, typed proposals -- not prose-scraping").
-    `proposal_class` is deliberately typed as a bare `string` here, not an
-    enum of the closed vocabulary -- an out-of-vocabulary value is exactly
-    what `invoke_mendel`'s own validation pipeline (PID-004C sec18) must
-    catch; this schema only enforces SHAPE, never the closed-vocabulary
-    CONTENT rule that belongs solely to that one validation seam.
+
+    `proposal_class` is constrained to the exact closed vocabulary via
+    `enum`, and `payload` is constrained per-class to exactly its allowed
+    key set via `_payload_key_restriction_blocks()` (PID-004C
+    real-provider acceptance proof, 2026-09-19 -- see that function's own
+    docstring and this schema's module-level history for the real,
+    live-observed failures that motivated both). Both are pure
+    defence-in-depth/practical robustness: `mendel_service.invoke_mendel`'s
+    own independent validation (`ProposalClass` membership,
+    `PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS`, `proposal_schema_version`
+    equality) remains the sole AUTHORITATIVE gate regardless of whether
+    this provider-side schema is honoured, bypassed, or belongs to a
+    future provider that ignores it entirely.
     """
     return {
         "type": "object",
@@ -202,33 +249,50 @@ def _proposal_set_json_schema() -> dict:
                     "additionalProperties": False,
                     "required": ["proposal_class", "proposal_schema_version", "payload", "rationale"],
                     "properties": {
-                        "proposal_class": {"type": "string"},
-                        "proposal_schema_version": {"type": "string"},
-                        # Deliberately NOT `additionalProperties: False` here (PID-004C
-                        # closure-hardening item 2, per the Architect's own instruction):
-                        # `payload`'s exact shape is per-class, and this schema is built
-                        # before the class is known at parse time, so it cannot itself
-                        # enforce the closed per-class key set. `darwin.workshop.
-                        # mendel_service._validate_payload_shape`'s
-                        # `PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS` closed-key-set check
-                        # remains the sole, authoritative "unknown fields fail closed"
-                        # enforcement, regardless of whether THIS provider-side JSON
-                        # Schema validation catches an unrecognised key or not -- never
+                        "proposal_class": {
+                            "type": "string",
+                            "enum": [member.value for member in ProposalClass],
+                        },
+                        # PID-004C real-provider acceptance proof (2026-09-19): the very
+                        # first real, authenticated invocation against this schema returned
+                        # a plausible-looking but wrong value here ("1.0.0"), which
+                        # mendel_service._validate_raw_proposal correctly rejected (fail
+                        # closed, zero proposals persisted) -- exactly the governed
+                        # behaviour working as designed, but revealing that nothing had
+                        # ever told the model what exact string to use. `const` makes the
+                        # correct value structurally the only value the schema-constrained
+                        # response can contain, rather than relying on prose alone.
+                        "proposal_schema_version": {"type": "string", "const": _PROPOSAL_SCHEMA_VERSION},
+                        # The base shape is a plain object -- the real per-class key
+                        # restriction is applied conditionally below, via
+                        # `_payload_key_restriction_blocks()`, since `payload`'s exact
+                        # allowed keys depend on `proposal_class` (not knowable in a
+                        # single unconditional `properties` entry). `darwin.workshop.
+                        # mendel_service._validate_payload_shape`'s own
+                        # `PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS` check remains the sole,
+                        # authoritative "unknown fields fail closed" enforcement
+                        # regardless of whether this provider-side JSON Schema
+                        # validation catches an unrecognised key or not -- never
                         # bypassable by a provider that skips its own schema validation.
                         "payload": {"type": "object"},
                         "rationale": {"type": "string"},
                         "affected_semantic_paths": {"type": "array", "items": {"type": "string"}},
                     },
-                    # PID-004C closure-hardening (2026-09-19), defence-in-depth ONLY: best-effort
-                    # tightening of PARAMETER_CHANGE's payload shape for the one case JSON Schema
-                    # can reasonably express here (fixed_value's JSON type agreeing with the
-                    # declared value_type, including JSON's own native boolean/integer
-                    # distinction). darwin.workshop.mendel_service._validate_parameter_change_
-                    # fixed_value remains the SOLE authoritative gate regardless of whether the
-                    # provider's own JSON Schema enforcement is perfect, partial, or skipped
-                    # entirely -- this is not the real boundary, it just fails a malformed
-                    # provider response one step earlier when it happens to help.
+                    # `allOf` combines two independent layers of defence-in-depth
+                    # (PID-004C real-provider acceptance proof, 2026-09-19):
+                    # `_payload_key_restriction_blocks()` (one entry per ProposalClass,
+                    # restricting payload to exactly that class's allowed keys, built
+                    # directly from mendel_service.PROPOSAL_CLASS_ALLOWED_PAYLOAD_KEYS)
+                    # plus the PARAMETER_CHANGE-specific block below tightening
+                    # `fixed_value`'s JSON type to agree with the declared `value_type`
+                    # (the one case JSON Schema can reasonably express beyond key
+                    # presence). Both together are still never the real boundary --
+                    # `mendel_service._validate_payload_shape`/
+                    # `_validated_parameter_change_fixed_value` remain the SOLE
+                    # authoritative gates regardless of whether the provider's own
+                    # JSON Schema enforcement is perfect, partial, or skipped entirely.
                     "allOf": [
+                        *_payload_key_restriction_blocks(),
                         {
                             "if": {
                                 "required": ["proposal_class"],
@@ -359,9 +423,13 @@ def _render_prompt(*, context: BoundedMendelContext, purpose: InvocationPurpose,
         f"{fenced_payload}\n"
         "=== END UNTRUSTED SOURCE DATA ===\n\n"
         "Produce your typed proposal set now, as a single JSON object matching exactly the JSON "
-        "Schema supplied to this invocation -- a 'proposals' array (each with proposal_class, "
-        "proposal_schema_version, payload, rationale, and optionally affected_semantic_paths) plus "
-        "a bounded 'reasoning_summary' string. Nothing else."
+        "Schema supplied to this invocation -- a 'proposals' array (each with proposal_class "
+        f"[exactly one of: {', '.join(member.value for member in ProposalClass)} -- never any "
+        f"other value, even a plausible-sounding synonym], proposal_schema_version [always exactly "
+        f"{_PROPOSAL_SCHEMA_VERSION!r}, never any other value], payload, rationale, and optionally "
+        "affected_semantic_paths) plus a bounded 'reasoning_summary' string. Nothing else. If there "
+        "is nothing genuinely worth proposing, return an empty 'proposals' array -- never invent a "
+        "proposal merely to have something to return."
     )
 
 
@@ -555,14 +623,19 @@ def parse_cli_envelope(stdout: str, *, returncode: int, stderr: str) -> MendelIn
             f"(terminal_reason={envelope.get('terminal_reason')!r}, "
             f"api_error_status={envelope.get('api_error_status')!r}): {envelope.get('result')!r}"
         )
-    # The CLI's own structured-output field. Different builds may surface
-    # the schema-validated object under a dedicated key or directly as
-    # `result` (rather than `result`'s ordinary plain-text-summary shape)
-    # when `--json-schema` was supplied -- this adapter accepts either,
-    # since no authenticated session exists on this host to observe a
-    # real success envelope and settle the question definitively (see
-    # this WP's final report's honest-disclosure section).
-    structured = envelope.get("structured_result", envelope.get("result"))
+    # The CLI's own structured-output field -- CONFIRMED from a real,
+    # authenticated success envelope (PID-004C real-provider acceptance
+    # proof, 2026-09-19, CLI v2.1.273): the genuine field name is
+    # `structured_output`, an object, alongside a `result` field that (in
+    # this build/version) also happens to carry the identical structured
+    # content as a JSON-encoded STRING. The earlier speculative parser
+    # checked a `structured_result` key, which was never observed to
+    # exist in any real envelope -- a wrong guess, now corrected. `result`
+    # is retained as a compatible secondary source (still JSON-string-
+    # parsed below) in case a future CLI build surfaces structured output
+    # there without the dedicated key, but `structured_output` is checked
+    # first as the genuine, observed field.
+    structured = envelope.get("structured_output", envelope.get("result"))
     if isinstance(structured, str):
         try:
             structured = json.loads(structured)
