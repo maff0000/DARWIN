@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from datetime import UTC, datetime
+from decimal import InvalidOperation
 
 import psycopg
 
@@ -61,6 +62,8 @@ from darwin.specification.policy import (
 from darwin.specification.provenance import RuleOrigin
 from darwin.specification.serialization import (
     SerializationError,
+    _dec_decimal,
+    _is_decimal_node,
     deserialize_specification_draft,
     serialize_specification_draft,
 )
@@ -252,6 +255,80 @@ def list_proposals(
 # ============================================================================
 
 
+def _validated_parameter_change_fixed_value(value_type: ParameterValueType, fixed_value: object) -> object:
+    """PID-004C closure-hardening (Architect-directed real-defect fix,
+    2026-09-19): `PARAMETER_CHANGE`'s declared `value_type` must agree
+    EXACTLY with `fixed_value`'s actual shape, checked here -- BEFORE
+    `_apply_parameter_change` (below) ever constructs a
+    `ParameterDefinition`, whose own `__post_init__`
+    (`darwin.specification.parameters`) performs no such cross-check and
+    is deliberately left untouched by this fix (that is a separate,
+    broader, pre-existing PID-004A gap -- see this work package's final
+    report).
+
+    Mirrors `darwin.specification.serialization._enc_scalar`'s own closed
+    `Decimal | int | bool | str` discipline exactly, including checking
+    `bool` before/separately from `int` since `bool` is an `int` subclass
+    in Python and must never be silently treated as one.
+
+    Returns the value to actually store as `ParameterDefinition.
+    fixed_value`: for DECIMAL this is the DECODED `Decimal` (this
+    codebase's own canonical wire representation for a Decimal scalar is
+    `{"__decimal__": "<string>"}` -- see `darwin.specification.
+    serialization._enc_decimal`/`_dec_decimal`/`_is_decimal_node`, reused
+    directly here rather than inventing a second representation); for
+    every other value_type the payload's `fixed_value` is already the
+    correct native Python scalar and is returned unchanged.
+    """
+    if value_type == ParameterValueType.BOOLEAN:
+        if not isinstance(fixed_value, bool):
+            raise MendelOutputValidationError(
+                f"PARAMETER_CHANGE value_type=BOOLEAN requires a genuine bool fixed_value, got "
+                f"{fixed_value!r} of type {type(fixed_value).__name__!r}"
+            )
+        return fixed_value
+    if value_type in (ParameterValueType.INTEGER, ParameterValueType.DURATION_SECONDS):
+        # bool excluded FIRST and explicitly -- bool is an int subclass in
+        # Python, and a bool fixed_value must never be silently accepted
+        # as a genuine INTEGER/DURATION_SECONDS value.
+        if isinstance(fixed_value, bool) or not isinstance(fixed_value, int):
+            raise MendelOutputValidationError(
+                f"PARAMETER_CHANGE value_type={value_type.value} requires a genuine int fixed_value "
+                f"(bool explicitly excluded), got {fixed_value!r} of type {type(fixed_value).__name__!r}"
+            )
+        return fixed_value
+    if value_type == ParameterValueType.STRING:
+        if not isinstance(fixed_value, str):
+            raise MendelOutputValidationError(
+                f"PARAMETER_CHANGE value_type=STRING requires a genuine str fixed_value, got "
+                f"{fixed_value!r} of type {type(fixed_value).__name__!r}"
+            )
+        return fixed_value
+    if value_type == ParameterValueType.DECIMAL:
+        # Accept ONLY this codebase's own canonical lossless wire shape
+        # ({"__decimal__": "<string>"}, with the wrapped value itself
+        # required to be a JSON string) -- never a raw JSON number, and
+        # never silently coerced from a binary float (a raw JSON float
+        # inside the wrapper would itself construct a lossy Decimal, so
+        # it is rejected here too, not just a bare float fixed_value).
+        if not _is_decimal_node(fixed_value) or not isinstance(fixed_value["__decimal__"], str):
+            raise MendelOutputValidationError(
+                "PARAMETER_CHANGE value_type=DECIMAL requires fixed_value in this codebase's own "
+                "canonical lossless wire representation {'__decimal__': '<string>'} (darwin."
+                f"specification.serialization's own contract) -- got {fixed_value!r}"
+            )
+        try:
+            return _dec_decimal(fixed_value)
+        except InvalidOperation as exc:
+            raise MendelOutputValidationError(
+                f"PARAMETER_CHANGE value_type=DECIMAL fixed_value {fixed_value!r} is not a valid "
+                f"Decimal string: {exc}"
+            ) from exc
+    raise MendelOutputValidationError(  # pragma: no cover -- closed enum, every member handled above
+        f"Unhandled ParameterValueType {value_type!r}"
+    )
+
+
 def _apply_parameter_change(draft: SpecificationDraft, payload: dict) -> SpecificationDraft:
     """FULL handler for PARAMETER_CHANGE, WP1 scope: creates or replaces a
     FIXED parameter's value via the existing `ParameterDefinition`
@@ -270,6 +347,12 @@ def _apply_parameter_change(draft: SpecificationDraft, payload: dict) -> Specifi
             "PARAMETER_CHANGE (WP1 full-handler scope) requires a non-null fixed_value -- TUNABLE "
             "domain mutation is not supported by this handler"
         )
+    # PID-004C closure-hardening (2026-09-19): explicit, non-coercive
+    # value_type/fixed_value shape check -- BEFORE ParameterDefinition is
+    # ever constructed -- so a mismatched proposal fails HERE, during
+    # invoke_mendel's own dry-run of this exact handler
+    # (_validate_payload_shape), never merely later at accept time.
+    fixed_value = _validated_parameter_change_fixed_value(value_type, fixed_value)
     existing = draft.tunable_parameters.get(parameter_id)
     if existing is not None:
         raise MendelOutputValidationError(
@@ -611,9 +694,32 @@ def accept_proposal(
     # MendelOutputValidationError here should be structurally unreachable,
     # but is deliberately left to propagate (never silently swallowed) if
     # it somehow occurs.
+    #
+    # Defence-in-depth ONLY (PID-004C closure-hardening, 2026-09-19): the
+    # primary fix is that invoke_mendel/_validate_payload_shape now
+    # refuses a mismatched PARAMETER_CHANGE payload before any
+    # MendelProposal row is ever persisted, so the handler/serialize step
+    # below should never actually raise for a proposal that went through
+    # the normal pipeline. This narrow except exists solely to turn a
+    # hypothetical malformed row (e.g. one inserted directly via
+    # MendelProposalRepository/raw SQL, bypassing invoke_mendel's gate
+    # entirely) into a governed MendelProposalNotApplicableError instead
+    # of an uncaught SerializationError/SpecificationError -- it catches
+    # only those two specific handler-construction-step exceptions, never
+    # a bare Exception, so a genuine programming bug elsewhere is not
+    # masked. Nothing has been written yet at this point (no draft/
+    # decision/proposal-status write has happened), so the proposal is
+    # left exactly PROPOSED -- never marked ACCEPTED, never orphaning a
+    # decision, transaction stays coherent.
     handler = _DRAFT_MUTATION_HANDLERS[proposal.proposal_class]
-    mutated_draft = handler(draft, proposal.payload)
-    document = serialize_specification_draft(mutated_draft)
+    try:
+        mutated_draft = handler(draft, proposal.payload)
+        document = serialize_specification_draft(mutated_draft)
+    except (SerializationError, SpecificationError) as exc:
+        raise MendelProposalNotApplicableError(
+            f"proposal_id={proposal_id!r} payload is malformed for its proposal_class "
+            f"{proposal.proposal_class.value!r} and cannot be applied: {exc}"
+        ) from exc
     try:
         service.update_draft(conn, workshop_id, expected_revision=revision, draft_document=document)
     except StaleRevisionError:

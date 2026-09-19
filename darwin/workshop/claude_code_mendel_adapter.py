@@ -145,6 +145,92 @@ def _proposal_set_json_schema() -> dict:
                         "rationale": {"type": "string"},
                         "affected_semantic_paths": {"type": "array", "items": {"type": "string"}},
                     },
+                    # PID-004C closure-hardening (2026-09-19), defence-in-depth ONLY: best-effort
+                    # tightening of PARAMETER_CHANGE's payload shape for the one case JSON Schema
+                    # can reasonably express here (fixed_value's JSON type agreeing with the
+                    # declared value_type, including JSON's own native boolean/integer
+                    # distinction). darwin.workshop.mendel_service._validate_parameter_change_
+                    # fixed_value remains the SOLE authoritative gate regardless of whether the
+                    # provider's own JSON Schema enforcement is perfect, partial, or skipped
+                    # entirely -- this is not the real boundary, it just fails a malformed
+                    # provider response one step earlier when it happens to help.
+                    "allOf": [
+                        {
+                            "if": {
+                                "required": ["proposal_class"],
+                                "properties": {"proposal_class": {"const": "PARAMETER_CHANGE"}},
+                            },
+                            "then": {
+                                "properties": {
+                                    "payload": {
+                                        "type": "object",
+                                        "required": ["parameter_id", "value_type", "fixed_value"],
+                                        "properties": {
+                                            "parameter_id": {"type": "string"},
+                                            "value_type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "DECIMAL", "INTEGER", "BOOLEAN", "STRING",
+                                                    "DURATION_SECONDS",
+                                                ],
+                                            },
+                                            "unit": {"type": ["string", "null"]},
+                                        },
+                                        "allOf": [
+                                            {
+                                                "if": {
+                                                    "required": ["value_type"],
+                                                    "properties": {"value_type": {"const": "INTEGER"}},
+                                                },
+                                                "then": {"properties": {"fixed_value": {"type": "integer"}}},
+                                            },
+                                            {
+                                                "if": {
+                                                    "required": ["value_type"],
+                                                    "properties": {
+                                                        "value_type": {"const": "DURATION_SECONDS"}
+                                                    },
+                                                },
+                                                "then": {"properties": {"fixed_value": {"type": "integer"}}},
+                                            },
+                                            {
+                                                "if": {
+                                                    "required": ["value_type"],
+                                                    "properties": {"value_type": {"const": "BOOLEAN"}},
+                                                },
+                                                "then": {"properties": {"fixed_value": {"type": "boolean"}}},
+                                            },
+                                            {
+                                                "if": {
+                                                    "required": ["value_type"],
+                                                    "properties": {"value_type": {"const": "STRING"}},
+                                                },
+                                                "then": {"properties": {"fixed_value": {"type": "string"}}},
+                                            },
+                                            {
+                                                "if": {
+                                                    "required": ["value_type"],
+                                                    "properties": {"value_type": {"const": "DECIMAL"}},
+                                                },
+                                                "then": {
+                                                    "properties": {
+                                                        "fixed_value": {
+                                                            "type": "object",
+                                                            "additionalProperties": False,
+                                                            "required": ["__decimal__"],
+                                                            "properties": {
+                                                                "__decimal__": {"type": "string"}
+                                                            },
+                                                        }
+                                                    }
+                                                },
+                                            },
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    ],
                 },
             },
         },
