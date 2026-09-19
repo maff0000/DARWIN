@@ -157,6 +157,36 @@ NEGATIVE_MATRIX: list[tuple[str, dict]] = [
         "decimal_plus_wrapped_binary_float",
         {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": 3.14}},
     ),
+    # PID-004C closure hardening (Architect-directed, 2026-09-19,
+    # re-audit-found gap): Decimal("NaN")/Decimal("sNaN")/
+    # Decimal("Infinity")/Decimal("-Infinity") are all valid Python Decimal
+    # constructions -- none of them raise InvalidOperation -- so a
+    # non-finite value must be rejected by an explicit is_finite() check,
+    # never left to sail through undetected.
+    (
+        "decimal_plus_nan",
+        {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": "NaN"}},
+    ),
+    (
+        "decimal_plus_signaling_nan",
+        {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": "sNaN"}},
+    ),
+    (
+        "decimal_plus_infinity",
+        {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": "Infinity"}},
+    ),
+    (
+        "decimal_plus_negative_infinity",
+        {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": "-Infinity"}},
+    ),
+    # `is_finite()` is spelling-agnostic -- it rejects every non-finite
+    # Decimal regardless of the exact string that decoded to it, so one
+    # alternate-spelling case ("Inf") is enough to prove the fix does not
+    # depend on matching a specific literal string.
+    (
+        "decimal_plus_inf_alternate_spelling",
+        {"parameter_id": "p", "value_type": "DECIMAL", "unit": None, "fixed_value": {"__decimal__": "Inf"}},
+    ),
 ]
 
 assert {case_id for case_id, _ in NEGATIVE_MATRIX} == {c for c, _ in NEGATIVE_MATRIX}, "case ids must be unique"
@@ -240,3 +270,103 @@ def test_decimal_positive_control_accepts_full_round_trip_through_to_real_draft_
 
         document = serialize_specification_draft(draft)
         assert document["fixed_parameters"]["risk_multiplier"]["fixed_value"] == {"__decimal__": "1.75"}
+
+
+# ============================================================================
+# Bypass-path proof (PID-004C closure hardening, 2026-09-19): the Auditor's
+# direct-insertion challenge, repeated against the fixed acceptance-boundary
+# except clause. A malformed PARAMETER_CHANGE proposal inserted directly via
+# the repository -- bypassing invoke_mendel's now-fixed gate entirely --
+# must, on accept_proposal, raise the governed MendelProposalNotApplicableError,
+# never an uncaught MendelOutputValidationError/SerializationError. This
+# exercises the SAME two-step MendelRunRepository.create()
+# (RUNNING)/mark_terminal() (SUCCEEDED) pattern invoke_mendel itself uses --
+# the mendel_runs table's own CHECK constraint requires completed_at_utc to
+# be set for any terminal status, so a run cannot be inserted directly as
+# already-SUCCEEDED.
+# ============================================================================
+
+
+def _insert_bypass_proposal(conn, workshop_id: str, revision: int, payload: dict) -> str:
+    from datetime import UTC, datetime
+
+    from darwin.core.identities import new_id
+    from darwin.research_store.mendel_repositories import (
+        MendelProposalRepository,
+        MendelRunRepository,
+    )
+    from darwin.workshop.mendel_domain import (
+        MendelProposal,
+        MendelRun,
+        ProposalCategory,
+        ProposalClass,
+        RunStatus,
+    )
+
+    run_id = new_id()
+    run = MendelRun(
+        run_id=run_id, workshop_id=workshop_id, purpose=InvocationPurpose.REVIEW_DRAFT, focus_text=None,
+        context_schema_version="v1", context_fingerprint="bypass-fp", provider_identity="bypass-test",
+        status=RunStatus.RUNNING, started_at_utc=datetime.now(UTC),
+    )
+    MendelRunRepository(conn).create(run)
+    MendelRunRepository(conn).mark_terminal(
+        workshop_id, run_id, status=RunStatus.SUCCEEDED, completed_at_utc=datetime.now(UTC)
+    )
+
+    proposal_id = new_id()
+    proposal = MendelProposal(
+        proposal_id=proposal_id, run_id=run_id, workshop_id=workshop_id,
+        proposal_class=ProposalClass.PARAMETER_CHANGE, proposal_category=ProposalCategory.DRAFT_MUTATING,
+        proposal_schema_version=PROPOSAL_SCHEMA_VERSION, payload=payload,
+        rationale="bypass-path proof: inserted directly, skipping invoke_mendel's gate",
+        affected_semantic_paths=(), generated_against_draft_revision=revision,
+    )
+    MendelProposalRepository(conn).create(proposal)
+    return proposal_id
+
+
+def _assert_bypass_refused_cleanly(conn, workshop_id: str, proposal_id: str, revision_before: int) -> None:
+    from darwin.workshop.mendel_errors import MendelProposalNotApplicableError
+
+    with pytest.raises(MendelProposalNotApplicableError):
+        mendel_service.accept_proposal(conn, workshop_id, proposal_id, actor="bypass-proof")
+
+    proposals = mendel_service.list_proposals(conn, workshop_id)
+    matching = [p for p in proposals if p.proposal_id == proposal_id]
+    assert len(matching) == 1
+    assert matching[0].status == ProposalStatus.PROPOSED
+
+    _, current_revision = service.get_draft(conn, workshop_id)
+    assert current_revision == revision_before
+
+    decisions = service.list_decisions(conn, workshop_id)
+    assert decisions == []
+
+
+def test_bypass_path_integer_dict_mismatch_raises_governed_refusal_not_uncaught_exception(pg_config):
+    """The Auditor's own bypass challenge, replayed against the fixed
+    acceptance-boundary except clause: a proposal inserted directly (never
+    through invoke_mendel's gate) with the exact original mismatched
+    payload must, on accept, raise MendelProposalNotApplicableError --
+    never an uncaught MendelOutputValidationError."""
+    with connection(pg_config) as conn:
+        workshop, revision = open_workshop_with_draft(conn)
+        proposal_id = _insert_bypass_proposal(
+            conn, workshop.workshop_id, revision,
+            {"parameter_id": "max_daily_trades", "value_type": "INTEGER", "unit": None, "fixed_value": {}},
+        )
+        _assert_bypass_refused_cleanly(conn, workshop.workshop_id, proposal_id, revision)
+
+
+def test_bypass_path_non_finite_decimal_raises_governed_refusal_not_uncaught_exception(pg_config):
+    """Same bypass challenge, for a directly-inserted non-finite DECIMAL
+    proposal -- must receive the identical governed refusal."""
+    with connection(pg_config) as conn:
+        workshop, revision = open_workshop_with_draft(conn)
+        proposal_id = _insert_bypass_proposal(
+            conn, workshop.workshop_id, revision,
+            {"parameter_id": "risk_multiplier", "value_type": "DECIMAL", "unit": None,
+             "fixed_value": {"__decimal__": "NaN"}},
+        )
+        _assert_bypass_refused_cleanly(conn, workshop.workshop_id, proposal_id, revision)

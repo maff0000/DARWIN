@@ -318,12 +318,27 @@ def _validated_parameter_change_fixed_value(value_type: ParameterValueType, fixe
                 f"specification.serialization's own contract) -- got {fixed_value!r}"
             )
         try:
-            return _dec_decimal(fixed_value)
+            decoded = _dec_decimal(fixed_value)
         except InvalidOperation as exc:
             raise MendelOutputValidationError(
                 f"PARAMETER_CHANGE value_type=DECIMAL fixed_value {fixed_value!r} is not a valid "
                 f"Decimal string: {exc}"
             ) from exc
+        # PID-004C closure hardening (Architect-directed, 2026-09-19, closing
+        # a real Auditor-found gap): `Decimal("NaN")`/`Decimal("sNaN")`/
+        # `Decimal("Infinity")`/`Decimal("-Infinity")` are all valid Python
+        # Decimal constructions and therefore never raise `InvalidOperation`
+        # above -- a non-finite value would otherwise sail through
+        # undetected and reach persistence. A strategy parameter's fixed
+        # value must always be a genuine, finite number; never silently
+        # normalised, never left for a later validation stage to discover.
+        if not decoded.is_finite():
+            raise MendelOutputValidationError(
+                f"PARAMETER_CHANGE value_type=DECIMAL fixed_value {fixed_value!r} decodes to a "
+                f"non-finite Decimal ({decoded!r}) -- NaN/sNaN/Infinity/-Infinity are never a valid "
+                f"fixed parameter value"
+            )
+        return decoded
     raise MendelOutputValidationError(  # pragma: no cover -- closed enum, every member handled above
         f"Unhandled ParameterValueType {value_type!r}"
     )
@@ -691,23 +706,24 @@ def accept_proposal(
             f"proposal_id={proposal_id!r} is DRAFT_MUTATING but Workshop {workshop_id!r} has no draft"
         )
     # The payload was already validated at invoke_mendel time -- a
-    # MendelOutputValidationError here should be structurally unreachable,
-    # but is deliberately left to propagate (never silently swallowed) if
-    # it somehow occurs.
+    # MendelOutputValidationError here should be structurally unreachable
+    # for a proposal that went through the normal invoke_mendel pipeline.
     #
-    # Defence-in-depth ONLY (PID-004C closure-hardening, 2026-09-19): the
-    # primary fix is that invoke_mendel/_validate_payload_shape now
-    # refuses a mismatched PARAMETER_CHANGE payload before any
-    # MendelProposal row is ever persisted, so the handler/serialize step
-    # below should never actually raise for a proposal that went through
-    # the normal pipeline. This narrow except exists solely to turn a
-    # hypothetical malformed row (e.g. one inserted directly via
+    # Defence-in-depth ONLY (PID-004C closure-hardening, 2026-09-19,
+    # re-audit-found gap closed): this narrow except exists solely to turn
+    # a hypothetical malformed row (e.g. one inserted directly via
     # MendelProposalRepository/raw SQL, bypassing invoke_mendel's gate
-    # entirely) into a governed MendelProposalNotApplicableError instead
-    # of an uncaught SerializationError/SpecificationError -- it catches
-    # only those two specific handler-construction-step exceptions, never
-    # a bare Exception, so a genuine programming bug elsewhere is not
-    # masked. Nothing has been written yet at this point (no draft/
+    # entirely) into a governed MendelProposalNotApplicableError instead of
+    # an uncaught internal exception escaping this boundary.
+    # `MendelOutputValidationError` is explicitly included alongside
+    # `SerializationError`/`SpecificationError` -- it is exactly what
+    # `_validated_parameter_change_fixed_value` (called again here via
+    # `_apply_parameter_change`) raises for a type-mismatched fixed_value,
+    # and omitting it left precisely that bypass path leaking an uncaught
+    # MendelOutputValidationError instead of the promised governed
+    # refusal. Still only these three specific, narrow exception types --
+    # never a bare Exception, so a genuine programming bug elsewhere is
+    # not masked. Nothing has been written yet at this point (no draft/
     # decision/proposal-status write has happened), so the proposal is
     # left exactly PROPOSED -- never marked ACCEPTED, never orphaning a
     # decision, transaction stays coherent.
@@ -715,7 +731,7 @@ def accept_proposal(
     try:
         mutated_draft = handler(draft, proposal.payload)
         document = serialize_specification_draft(mutated_draft)
-    except (SerializationError, SpecificationError) as exc:
+    except (MendelOutputValidationError, SerializationError, SpecificationError) as exc:
         raise MendelProposalNotApplicableError(
             f"proposal_id={proposal_id!r} payload is malformed for its proposal_class "
             f"{proposal.proposal_class.value!r} and cannot be applied: {exc}"
