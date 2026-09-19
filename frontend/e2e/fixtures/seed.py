@@ -525,6 +525,55 @@ with connection(cfg.postgres) as conn:
     )
     conn.commit()
 
+    # 5) PID-004C WP3 MENDEL fixture: a dedicated ACTIVE Workshop with a
+    # real, validation-clean draft at revision 1 -- e2e/mendel.spec.ts's
+    # own Workshop, never shared with any of the fixtures above (same
+    # "no cross-file row sharing" discipline this script's own comments
+    # already establish for scenario 1's dedicated discovery). The real
+    # MENDEL invocation itself happens LIVE during the test, through the
+    # real UI + the real POST .../mendel/invoke endpoint -- this only
+    # seeds the Workshop/draft the test opens (PID-004B/PID-004C
+    # directive: never construct Workshop/MENDEL state client-side).
+    candidate_mendel_id = new_id()
+    candidate_repo.create(
+        FoundationStrategyCandidate(
+            id=candidate_mendel_id, title="E2E MENDEL Fixture — Session Breakout",
+            pipeline_stage=PipelineStage.DISCOVERED,
+        )
+    )
+    workshop_mendel = workshop_service.open_workshop(conn, candidate_id=candidate_mendel_id)
+    mendel_draft = minimal_valid_draft(candidate_id=candidate_mendel_id)
+    workshop_service.update_draft(
+        conn, workshop_mendel.workshop_id, expected_revision=0,
+        draft_document=serialize_specification_draft(mendel_draft),
+        schema_semantic_version=mendel_draft.schema_semantic_version,
+    )
+    conn.commit()
+
+    # 6) PID-004C CLOSURE HARDENING item 1 fixture: a dedicated, real
+    # XAUUSD SCOUT discovery -- e2e/mendel.spec.ts's own real-SCOUT-linked
+    # MENDEL proof needs a genuine `scout_discoveries` row to open a
+    # Workshop LIVE against (mirrors scenario 1's `disc_workshop_scout_
+    # flow` discipline above exactly: only the discovery is pre-seeded;
+    # the candidate/Workshop are created LIVE during the test, through the
+    # real "Open Workshop" click, never constructed client-side or
+    # pre-seeded here). Deliberately its OWN discovery -- never shared with
+    # `disc_workshop_scout_flow` above (workshop.spec.ts's own row) -- for
+    # the same cross-file Playwright-worker-race reason that fixture's
+    # comment already gives.
+    disc_mendel_scout_flow = make_manual_discovery(
+        source_id=source_repo.get_by_key("USER_DISCOVERED")["id"],
+        origin_kind=OriginKind.USER_DISCOVERED,
+        title="E2E MENDEL+SCOUT Source — XAUUSD Range Break",
+        origin_description="Seeded exclusively for e2e/mendel.spec.ts's real-SCOUT-linked MENDEL proof (PID-004C closure hardening item 1)",
+        origin_url="https://example.invalid/e2e-mendel-scout-source",
+        source_symbol="XAUUSD",
+        source_timeframe="1h",
+        original_description="Break of the prior day's high/low range on XAUUSD.",
+        pasted_rule_text="IF close > priorDayHigh THEN buy\nIF close < priorDayLow THEN sell",
+    )
+    conn.commit()
+
 _OUTPUT = {
     "seeded": True,
     "xau_dataset_id": xau_dataset.id,
@@ -546,6 +595,9 @@ _OUTPUT = {
         "data_blocked_workshop_id": workshop_blocked.workshop_id,
         "stale_edit_candidate_id": candidate_stale_id,
         "stale_edit_workshop_id": workshop_stale.workshop_id,
+        "mendel_candidate_id": candidate_mendel_id,
+        "mendel_workshop_id": workshop_mendel.workshop_id,
+        "mendel_scout_discovery_id": disc_mendel_scout_flow.id,
     },
 }
 print(json.dumps(_OUTPUT))

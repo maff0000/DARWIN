@@ -372,6 +372,109 @@ export interface ReadinessResult {
   requirements: ReadinessRequirement[];
 }
 
+// --- PID-004C MENDEL Workshop Assistant (darwin/workshop/{mendel_domain,
+// mendel_context,api}.py) -- mirrors the real API responses exactly, same
+// discipline as the rest of this file. MENDEL is NOT a chat feature: there
+// is no free-form prompt type anywhere below, only the closed
+// `InvocationPurpose` vocabulary + a bounded `focus_text`. ---
+
+export type InvocationPurpose =
+  | "ANALYSE_AMBIGUITY"
+  | "REVIEW_DRAFT"
+  | "SUGGEST_NEXT_QUESTIONS"
+  | "EXPLAIN_VALIDATION"
+  | "PROPOSE_DATA_REQUIREMENTS"
+  | "INTERPRET_RULE";
+
+export type ProposalClass =
+  | "ASK_QUESTION"
+  | "MATERIAL_CONCERN"
+  | "SEMANTIC_CHANGE"
+  | "PARAMETER_CHANGE"
+  | "DATA_REQUIREMENT"
+  | "THESIS_CHANGE"
+  | "POLICY_CLASSIFICATION"
+  | "INSTRUMENT_CLARIFICATION"
+  | "TIMEFRAME_CLARIFICATION";
+
+// The three behavioural categories (PID-004C sec6.2). QUESTION/ADVISORY
+// acceptance NEVER mutates the draft or its revision; DRAFT_MUTATING
+// acceptance ALWAYS creates a new draft revision. ARENA's MendelPanel
+// gives these two behaviours visually distinct panel treatment, never
+// just a status-chip difference (PID-004C sec13.1's own directive).
+export type ProposalCategory = "QUESTION" | "ADVISORY" | "DRAFT_MUTATING";
+
+export type ProposalStatus = "PROPOSED" | "ACCEPTED" | "REJECTED" | "STALE";
+
+export type MendelRunStatus = "RUNNING" | "SUCCEEDED" | "FAILED" | "TIMEOUT";
+
+export interface MendelRun {
+  run_id: string;
+  workshop_id: string;
+  purpose: InvocationPurpose;
+  focus_text: string | null;
+  context_schema_version: string;
+  context_fingerprint: string;
+  provider_identity: string;
+  status: MendelRunStatus;
+  started_at_utc: string | null;
+  completed_at_utc: string | null;
+  error_classification: string | null;
+  // Present only on the synchronous response to the invocation that
+  // produced it -- a historical run read back later honestly carries
+  // `null` here (darwin.workshop.mendel_domain.MendelRun.reasoning_summary's
+  // own docstring: never a durable audit field, PID-004C sec10.1).
+  reasoning_summary: string | null;
+}
+
+// `generated_against_draft_revision` is either a real revision number or
+// the literal string "NO_DRAFT_YET" (darwin.workshop.api's own
+// `_mendel_proposal_dict` encoding of the `NO_DRAFT_YET` sentinel,
+// PID-004C sec7.5) -- never an ambiguous null/0.
+export interface MendelProposal {
+  proposal_id: string;
+  run_id: string;
+  workshop_id: string;
+  proposal_class: ProposalClass;
+  proposal_category: ProposalCategory;
+  proposal_schema_version: string;
+  payload: Record<string, unknown>;
+  rationale: string;
+  affected_semantic_paths: string[];
+  generated_against_draft_revision: number | "NO_DRAFT_YET";
+  status: ProposalStatus;
+  created_at_utc: string | null;
+  resolved_at_utc: string | null;
+  resulting_question_id: string | null;
+  resulting_decision_id: string | null;
+}
+
+export interface MendelInvokeRequest {
+  purpose: InvocationPurpose;
+  focus_text?: string | null;
+}
+
+// PID-004C sec8.3.1's `DraftCapabilityView` -- a bounded, DERIVED,
+// pre-finalisation view, never a `DataReadinessAssessment` (which only
+// exists post-finalisation, see ReadinessResult above). `availability`
+// mirrors `darwin.workshop.mendel_context.DataNeedAvailability` exactly.
+export type DataNeedAvailability =
+  | "SUPPORTED_AND_AVAILABLE"
+  | "SUPPORTED_BUT_NOT_AVAILABLE"
+  | "UNSUPPORTED_OR_AUTHORITY_MISSING"
+  | "UNKNOWN";
+
+export interface DataRequirementCapability {
+  requirement_id: string;
+  availability: DataNeedAvailability;
+  reason: string | null;
+}
+
+export interface DraftCapabilityView {
+  per_requirement: DataRequirementCapability[];
+}
+
+
 // --- Specification document node shapes (draft, tagged by __type__) -------
 
 export type InstrumentApplicabilityKind = "EXPLICIT_SINGLE" | "EXPLICIT_SET" | "INSTRUMENT_GENERIC";

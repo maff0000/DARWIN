@@ -48,7 +48,7 @@ from darwin.scout.domain import IntakeStatus, OriginKind
 from darwin.scout.service import MAX_RECORDS_PER_RUN, ScoutRequestError
 from darwin.scout.trader_dev_adapter import ALLOWED_SORTS as SCOUT_ALLOWED_SORTS
 from darwin.specification.serialization import deserialize_strategy_version
-from darwin.workshop.api import register_workshop_routes
+from darwin.workshop.api import register_mendel_routes, register_workshop_routes
 
 logger = logging.getLogger(__name__)
 
@@ -425,6 +425,19 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
     # to avoid unbounded growth; wired the same way SCOUT's routes are (same
     # FastAPI app/process, not a separate service -- PID-004 sec53).
     register_workshop_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
+
+    # --- PID-004C MENDEL Workshop Assistant (docs/pids/
+    # PID-004C-MENDEL-WORKSHOP-ASSISTANT.md sec12) -- WP1 backend + WP2 real
+    # Claude Code adapter (auth-architecture correction 2026-09-19: MENDEL
+    # authenticates via Claude Code's own ambient subscription/OAuth login,
+    # never a separately-provisioned API key). darwin.workshop.api.
+    # register_mendel_routes picks ClaudeCodeMendelAdapter when
+    # cfg.mendel_use_real_provider is explicitly opted into
+    # (DARWIN_MENDEL_USE_REAL_PROVIDER=1), else falls back to
+    # DeterministicTestMendelAdapter -- an honest, additive, non-fatal
+    # default, never a startup requirement. Same process, same mounting
+    # discipline as the Workshop routes immediately above.
+    register_mendel_routes(app, cfg, ensure_ready_for_data=_ensure_ready_for_data, readiness=_readiness)
 
     _mount_arena(app)
 

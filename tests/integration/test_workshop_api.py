@@ -172,8 +172,19 @@ def test_no_generic_command_or_arbitrary_path_endpoint_exists(pg_config):
     client = _client(pg_config)
     workshop_paths = [r.path for r in client.app.routes if getattr(r, "path", "").startswith("/api/v1/workshops")]
     assert workshop_paths, "expected the Workshop routes to be registered"
-    forbidden_fragments = ("path:", "command", "execute", "run", "shell", "cmd")
+    forbidden_fragments = ("path:", "command", "execute", "shell", "cmd")
+    # "run" is checked as a whole path SEGMENT, never a raw substring: PID-004C
+    # (docs/pids/PID-004C-MENDEL-WORKSHOP-ASSISTANT.md sec10.1) legitimately
+    # introduces a "mendel/runs" resource noun (MendelRun invocation
+    # history) nested under this same /api/v1/workshops prefix -- a bare
+    # substring check would false-positive on that plural noun even though
+    # it is not a "run this command" surface. A literal "run" segment on
+    # its own would still be caught below.
+    forbidden_segments = ("run", "path", "command", "execute", "shell", "cmd")
     for path in workshop_paths:
         lowered = path.lower()
+        segments = [s for s in lowered.split("/") if s]
         for fragment in forbidden_fragments:
             assert fragment not in lowered, f"route {path!r} looks like a generic command/path surface"
+        for segment_word in forbidden_segments:
+            assert segment_word not in segments, f"route {path!r} looks like a generic command/path surface"

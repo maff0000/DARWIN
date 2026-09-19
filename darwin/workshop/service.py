@@ -47,6 +47,7 @@ from darwin.research_store.workshop_repositories import (
 )
 from darwin.specification.data_requirements import (
     DataAuthorityClass,
+    DataRequirement,
     HistoricalDepthUnit,
 )
 from darwin.specification.domain import SpecificationDraft
@@ -447,11 +448,17 @@ def get_readiness(conn: psycopg.Connection, workshop_id: str) -> dict:
     }
 
 
-def assess_workshop_readiness(conn: psycopg.Connection, workshop_id: str) -> dict:
-    """Deliberate, explicit readiness assessment against a FINALISED
-    Workshop's StrategyVersion -- a human-triggered action, never automatic.
-    Genuinely computed from real DARWIN state, never fabricated for
-    display:
+def evaluate_data_requirement_availability(
+    requirement: DataRequirement, datasets: list[dict]
+) -> tuple[PerRequirementAvailability, str | None]:
+    """The one, shared, genuinely-computed-from-real-state per-requirement
+    availability check (PID-004 sec26-28) -- extracted so it can be reused
+    by BOTH `assess_workshop_readiness` (below, against a FINALISED
+    StrategyVersion's requirements) AND PID-004C's `DraftCapabilityView`
+    (`darwin.workshop.mendel_context`, against a pre-finalisation DRAFT's
+    requirements) without either duplicating the HERMES/`MarketDataset`
+    lookup logic (PID-004C sec8.3: "reuse them through the same bounded
+    context builder... do not build a new, separate capability registry").
 
     * a `HERMES_CANONICAL_MARKET` requirement is AVAILABLE if a real
       `MarketDataset` row exists for one of the requirement's applicable
@@ -461,6 +468,40 @@ def assess_workshop_readiness(conn: psycopg.Connection, workshop_id: str) -> dic
       `AUTHORITY_NOT_ONBOARDED` -- truthfully: this DARWIN build has no
       data-authority integration for anything beyond HERMES's own
       canonical market data today.
+    """
+    if requirement.authority_class != DataAuthorityClass.HERMES_CANONICAL_MARKET:
+        return (
+            PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED,
+            (
+                f"no data authority integration exists for {requirement.authority_class.value} "
+                f"in this DARWIN build"
+            ),
+        )
+    depth = requirement.required_historical_depth
+    for dataset in datasets:
+        if dataset["instrument"] not in requirement.instrument_applicability:
+            continue
+        if requirement.timeframe is not None and dataset["timeframe"] != requirement.timeframe.code:
+            continue
+        if depth.unit == HistoricalDepthUnit.BARS and int(dataset["record_count"]) < depth.count:
+            continue
+        return (PerRequirementAvailability.AVAILABLE, None)
+    return (
+        PerRequirementAvailability.UNAVAILABLE,
+        (
+            f"no MarketDataset found covering {list(requirement.instrument_applicability)} at "
+            f"{requirement.timeframe.code if requirement.timeframe else 'any timeframe'} with "
+            f"sufficient depth"
+        ),
+    )
+
+
+def assess_workshop_readiness(conn: psycopg.Connection, workshop_id: str) -> dict:
+    """Deliberate, explicit readiness assessment against a FINALISED
+    Workshop's StrategyVersion -- a human-triggered action, never automatic.
+    Genuinely computed from real DARWIN state, never fabricated for
+    display (see `evaluate_data_requirement_availability` above for the
+    actual per-requirement logic).
 
     Writes one new, append-only `DataReadinessAssessment` (PID-004
     sec27/sec28: "reassess readiness, not rediscover/rewrite" -- never
@@ -476,39 +517,10 @@ def assess_workshop_readiness(conn: psycopg.Connection, workshop_id: str) -> dic
     dataset_repo = MarketDatasetRepository(conn)
     datasets = dataset_repo.list(limit=500)
 
-    per_requirement: dict[str, tuple[PerRequirementAvailability, str | None]] = {}
-    for requirement in version.data_requirements:
-        if requirement.authority_class != DataAuthorityClass.HERMES_CANONICAL_MARKET:
-            per_requirement[requirement.requirement_id] = (
-                PerRequirementAvailability.AUTHORITY_NOT_ONBOARDED,
-                (
-                    f"no data authority integration exists for {requirement.authority_class.value} "
-                    f"in this DARWIN build"
-                ),
-            )
-            continue
-        depth = requirement.required_historical_depth
-        available = False
-        for dataset in datasets:
-            if dataset["instrument"] not in requirement.instrument_applicability:
-                continue
-            if requirement.timeframe is not None and dataset["timeframe"] != requirement.timeframe.code:
-                continue
-            if depth.unit == HistoricalDepthUnit.BARS and int(dataset["record_count"]) < depth.count:
-                continue
-            available = True
-            break
-        if available:
-            per_requirement[requirement.requirement_id] = (PerRequirementAvailability.AVAILABLE, None)
-        else:
-            per_requirement[requirement.requirement_id] = (
-                PerRequirementAvailability.UNAVAILABLE,
-                (
-                    f"no MarketDataset found covering {list(requirement.instrument_applicability)} at "
-                    f"{requirement.timeframe.code if requirement.timeframe else 'any timeframe'} with "
-                    f"sufficient depth"
-                ),
-            )
+    per_requirement: dict[str, tuple[PerRequirementAvailability, str | None]] = {
+        requirement.requirement_id: evaluate_data_requirement_availability(requirement, datasets)
+        for requirement in version.data_requirements
+    }
 
     assessment = assess_readiness(
         assessment_id=new_id(),

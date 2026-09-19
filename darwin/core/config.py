@@ -105,6 +105,37 @@ class DarwinConfig:
     hermes: HermesConfig
     build: BuildConfig
     log_level: str
+    #: PID-004C WP2 auth-architecture correction (2026-09-19) -- an
+    #: explicit, narrow, OFF-BY-DEFAULT opt-in: `DARWIN_MENDEL_USE_REAL_
+    #: PROVIDER=1` makes `darwin.workshop.api.register_mendel_routes`'s
+    #: adapter-selection DI point wire the real `ClaudeCodeMendelAdapter`
+    #: (darwin.workshop.claude_code_mendel_adapter) instead of
+    #: `DeterministicTestMendelAdapter`. There is deliberately no
+    #: credential-based signal here any more -- MENDEL no longer
+    #: configures or uses any Anthropic API key at all; authentication is
+    #: entirely the ambient Claude Code CLI installation's own
+    #: subscription/OAuth login state (see `ClaudeCodeMendelAdapter.
+    #: auth_status`/`get_claude_auth_status`). Off by default, explicit,
+    #: never silently active -- mirrors `mendel_e2e_fixture_adapter_
+    #: enabled`'s own discipline below. `darwin_core` must never fail to
+    #: start over this: the default (`False`) always keeps the
+    #: deterministic test adapter, which has no external dependency at
+    #: all.
+    mendel_use_real_provider: bool = False
+    #: PID-004C WP3 -- an explicit, narrow, OFF-BY-DEFAULT test-only escape
+    #: hatch: `DARWIN_MENDEL_E2E_FIXTURE_ADAPTER=1` makes
+    #: `darwin.workshop.api.register_mendel_routes`'s adapter-selection DI
+    #: point wire a `DeterministicTestMendelAdapter` pre-loaded with a
+    #: small, fixed, illustrative proposal set instead of the bare
+    #: (zero-proposal) default -- WITHOUT requiring a caller-supplied
+    #: `adapter=` at construction time. This exists ONLY so a real browser
+    #: (Playwright, against a real running darwin_core container) can
+    #: exercise a genuine MENDEL invocation -> proposal render -> accept/
+    #: reject/stale round trip end to end, since a browser cannot inject a
+    #: Python test double directly. Never set in production; a real
+    #: deployment never sets this var, so this field defaults to `False`
+    #: and changes nothing about existing behaviour.
+    mendel_e2e_fixture_adapter_enabled: bool = False
 
     @staticmethod
     def load() -> DarwinConfig:
@@ -130,4 +161,14 @@ class DarwinConfig:
             environment=os.environ.get("DARWIN_ENV", "dev"),
         )
         log_level = os.environ.get("DARWIN_LOG_LEVEL", "INFO").upper()
-        return DarwinConfig(postgres=postgres, hermes=hermes, build=build, log_level=log_level)
+        mendel_use_real_provider = (
+            os.environ.get("DARWIN_MENDEL_USE_REAL_PROVIDER", "").strip() == "1"
+        )
+        mendel_e2e_fixture_adapter_enabled = (
+            os.environ.get("DARWIN_MENDEL_E2E_FIXTURE_ADAPTER", "").strip() == "1"
+        )
+        return DarwinConfig(
+            postgres=postgres, hermes=hermes, build=build, log_level=log_level,
+            mendel_use_real_provider=mendel_use_real_provider,
+            mendel_e2e_fixture_adapter_enabled=mendel_e2e_fixture_adapter_enabled,
+        )
