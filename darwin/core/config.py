@@ -51,40 +51,6 @@ def _secret(value_env: str, file_env: str, *, required: bool) -> str:
     return ""
 
 
-def resolve_mendel_provider_api_key(file_env: str = "DARWIN_MENDEL_PROVIDER_API_KEY_FILE") -> str | None:
-    """PID-004C WP2 -- resolve the MENDEL Claude Code provider credential.
-
-    Deliberately narrower than `_secret` above: this credential supports
-    ONLY the `*_FILE` convention, never an inline env var (`.env.example`'s
-    own comment on `DARWIN_MENDEL_PROVIDER_API_KEY_FILE` is explicit:
-    "Never set an inline ANTHROPIC_API_KEY= anywhere") -- an inline value
-    would sit in this process's own environment for the lifetime of the
-    process (visible via /proc/<pid>/environ, inherited by every future
-    child process), which is an unnecessary exposure surface for a
-    genuinely optional, cost-bearing external-provider secret.
-
-    Returns `None` (never an empty string masquerading as a real key) when
-    the slot is not configured at all -- callers (e.g. `darwin.workshop.
-    api.register_mendel_routes`'s adapter-selection DI point) use `None`
-    to decide "fall back to `DeterministicTestMendelAdapter`", never a
-    falsy-but-present string. Raises `ConfigError` (fails loudly, per this
-    module's own PID-001 §7 discipline) if the file IS configured but
-    missing or empty -- an operator who set the slot and got it wrong
-    must find out immediately, never silently run with no real MENDEL
-    provider while believing one is configured.
-    """
-    file_path = os.environ.get(file_env, "").strip()
-    if not file_path:
-        return None
-    p = Path(file_path)
-    if not p.exists():
-        raise ConfigError(f"{file_env}={file_path!r} does not exist.")
-    key = p.read_text(encoding="utf-8").strip()
-    if not key:
-        raise ConfigError(f"{file_env}={file_path!r} is empty.")
-    return key
-
-
 def _require(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -139,11 +105,23 @@ class DarwinConfig:
     hermes: HermesConfig
     build: BuildConfig
     log_level: str
-    #: PID-004C WP2 -- the MENDEL Claude Code provider credential, or
-    #: `None` when unconfigured (see `resolve_mendel_provider_api_key`).
-    #: `repr=False` so it can never appear in a logged/printed `DarwinConfig`,
-    #: mirroring `PostgresConfig.password`/`HermesConfig.password` above.
-    mendel_provider_api_key: str | None = field(default=None, repr=False)
+    #: PID-004C WP2 auth-architecture correction (2026-09-19) -- an
+    #: explicit, narrow, OFF-BY-DEFAULT opt-in: `DARWIN_MENDEL_USE_REAL_
+    #: PROVIDER=1` makes `darwin.workshop.api.register_mendel_routes`'s
+    #: adapter-selection DI point wire the real `ClaudeCodeMendelAdapter`
+    #: (darwin.workshop.claude_code_mendel_adapter) instead of
+    #: `DeterministicTestMendelAdapter`. There is deliberately no
+    #: credential-based signal here any more -- MENDEL no longer
+    #: configures or uses any Anthropic API key at all; authentication is
+    #: entirely the ambient Claude Code CLI installation's own
+    #: subscription/OAuth login state (see `ClaudeCodeMendelAdapter.
+    #: auth_status`/`get_claude_auth_status`). Off by default, explicit,
+    #: never silently active -- mirrors `mendel_e2e_fixture_adapter_
+    #: enabled`'s own discipline below. `darwin_core` must never fail to
+    #: start over this: the default (`False`) always keeps the
+    #: deterministic test adapter, which has no external dependency at
+    #: all.
+    mendel_use_real_provider: bool = False
     #: PID-004C WP3 -- an explicit, narrow, OFF-BY-DEFAULT test-only escape
     #: hatch: `DARWIN_MENDEL_E2E_FIXTURE_ADAPTER=1` makes
     #: `darwin.workshop.api.register_mendel_routes`'s adapter-selection DI
@@ -183,12 +161,14 @@ class DarwinConfig:
             environment=os.environ.get("DARWIN_ENV", "dev"),
         )
         log_level = os.environ.get("DARWIN_LOG_LEVEL", "INFO").upper()
-        mendel_provider_api_key = resolve_mendel_provider_api_key()
+        mendel_use_real_provider = (
+            os.environ.get("DARWIN_MENDEL_USE_REAL_PROVIDER", "").strip() == "1"
+        )
         mendel_e2e_fixture_adapter_enabled = (
             os.environ.get("DARWIN_MENDEL_E2E_FIXTURE_ADAPTER", "").strip() == "1"
         )
         return DarwinConfig(
             postgres=postgres, hermes=hermes, build=build, log_level=log_level,
-            mendel_provider_api_key=mendel_provider_api_key,
+            mendel_use_real_provider=mendel_use_real_provider,
             mendel_e2e_fixture_adapter_enabled=mendel_e2e_fixture_adapter_enabled,
         )

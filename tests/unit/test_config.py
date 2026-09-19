@@ -3,7 +3,6 @@ import pytest
 from darwin.core.config import (
     ConfigError,
     DarwinConfig,
-    resolve_mendel_provider_api_key,
 )
 
 
@@ -72,56 +71,16 @@ def test_repr_never_exposes_password(monkeypatch):
 
 
 # ============================================================================
-# PID-004C WP2 -- DARWIN_MENDEL_PROVIDER_API_KEY_FILE resolution.
+# PID-004C WP2 auth-architecture correction (2026-09-19) --
+# DARWIN_MENDEL_USE_REAL_PROVIDER, the explicit opt-in that replaced the
+# removed DARWIN_MENDEL_PROVIDER_API_KEY_FILE credential-file slot.
+# MENDEL no longer configures or uses any Anthropic API key at all, so
+# there is no credential-resolution helper left to test here -- only the
+# narrow, off-by-default opt-in flag itself.
 # ============================================================================
 
 
-def test_resolve_mendel_provider_api_key_returns_none_when_unconfigured(monkeypatch):
-    monkeypatch.delenv("DARWIN_MENDEL_PROVIDER_API_KEY_FILE", raising=False)
-    assert resolve_mendel_provider_api_key() is None
-
-
-def test_resolve_mendel_provider_api_key_reads_the_configured_file(tmp_path, monkeypatch):
-    secret_file = tmp_path / "mendel_key"
-    secret_file.write_text("sk-real-looking-but-fake-test-key\n")
-    monkeypatch.setenv("DARWIN_MENDEL_PROVIDER_API_KEY_FILE", str(secret_file))
-    assert resolve_mendel_provider_api_key() == "sk-real-looking-but-fake-test-key"
-
-
-def test_resolve_mendel_provider_api_key_raises_loudly_if_file_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("DARWIN_MENDEL_PROVIDER_API_KEY_FILE", str(tmp_path / "does_not_exist"))
-    with pytest.raises(ConfigError):
-        resolve_mendel_provider_api_key()
-
-
-def test_resolve_mendel_provider_api_key_raises_loudly_if_file_empty(tmp_path, monkeypatch):
-    secret_file = tmp_path / "empty_mendel_key"
-    secret_file.write_text("   \n")
-    monkeypatch.setenv("DARWIN_MENDEL_PROVIDER_API_KEY_FILE", str(secret_file))
-    with pytest.raises(ConfigError):
-        resolve_mendel_provider_api_key()
-
-
-def test_darwin_config_load_carries_mendel_provider_api_key_and_never_reprs_it(tmp_path, monkeypatch):
-    _clear_darwin_env(monkeypatch)
-    monkeypatch.setenv("DARWIN_PG_HOST", "localhost")
-    monkeypatch.setenv("DARWIN_PG_DB", "darwin")
-    monkeypatch.setenv("DARWIN_PG_USER", "darwin_app")
-    monkeypatch.setenv("DARWIN_PG_PASSWORD", "secret123")
-    monkeypatch.setenv("DARWIN_HERMES_HOST", "hermes-host")
-    monkeypatch.setenv("DARWIN_HERMES_DB", "tradingSignals")
-    monkeypatch.setenv("DARWIN_HERMES_USER", "darwin_ro")
-    monkeypatch.setenv("DARWIN_HERMES_PASSWORD", "hermes_secret")
-    secret_file = tmp_path / "mendel_key"
-    secret_file.write_text("sk-real-looking-but-fake-test-key")
-    monkeypatch.setenv("DARWIN_MENDEL_PROVIDER_API_KEY_FILE", str(secret_file))
-
-    cfg = DarwinConfig.load()
-    assert cfg.mendel_provider_api_key == "sk-real-looking-but-fake-test-key"
-    assert "sk-real-looking-but-fake-test-key" not in repr(cfg)
-
-
-def test_darwin_config_load_leaves_mendel_provider_api_key_none_when_unconfigured(monkeypatch):
+def test_darwin_config_load_defaults_mendel_use_real_provider_to_false(monkeypatch):
     _clear_darwin_env(monkeypatch)
     monkeypatch.setenv("DARWIN_PG_HOST", "localhost")
     monkeypatch.setenv("DARWIN_PG_DB", "darwin")
@@ -133,4 +92,30 @@ def test_darwin_config_load_leaves_mendel_provider_api_key_none_when_unconfigure
     monkeypatch.setenv("DARWIN_HERMES_PASSWORD", "hermes_secret")
 
     cfg = DarwinConfig.load()
-    assert cfg.mendel_provider_api_key is None
+    assert cfg.mendel_use_real_provider is False
+
+
+def test_darwin_config_load_honours_explicit_mendel_use_real_provider_opt_in(monkeypatch):
+    _clear_darwin_env(monkeypatch)
+    monkeypatch.setenv("DARWIN_PG_HOST", "localhost")
+    monkeypatch.setenv("DARWIN_PG_DB", "darwin")
+    monkeypatch.setenv("DARWIN_PG_USER", "darwin_app")
+    monkeypatch.setenv("DARWIN_PG_PASSWORD", "secret123")
+    monkeypatch.setenv("DARWIN_HERMES_HOST", "hermes-host")
+    monkeypatch.setenv("DARWIN_HERMES_DB", "tradingSignals")
+    monkeypatch.setenv("DARWIN_HERMES_USER", "darwin_ro")
+    monkeypatch.setenv("DARWIN_HERMES_PASSWORD", "hermes_secret")
+    monkeypatch.setenv("DARWIN_MENDEL_USE_REAL_PROVIDER", "1")
+
+    cfg = DarwinConfig.load()
+    assert cfg.mendel_use_real_provider is True
+
+
+def test_darwin_config_no_longer_exposes_a_mendel_provider_api_key_surface():
+    """Grep-equivalent proof that the removed API-key config surface is
+    genuinely gone, not merely unused -- the old field/function names must
+    not exist on the module at all."""
+    import darwin.core.config as config_module
+
+    assert not hasattr(config_module, "resolve_mendel_provider_api_key")
+    assert "mendel_provider_api_key" not in DarwinConfig.__dataclass_fields__

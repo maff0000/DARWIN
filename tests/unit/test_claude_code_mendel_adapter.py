@@ -9,9 +9,21 @@ the actual installed binary) lives in its own file,
 tests/unit/test_claude_code_mendel_adapter_live_probe.py, kept separate
 so CI-speed concerns here never leak into that file's real-provider
 scope.
+
+Auth-architecture correction (2026-09-19): MENDEL no longer configures or
+uses any Anthropic API key -- `ClaudeCodeMendelAdapter` takes no
+credential of any kind, so every construction call below drops the old
+`api_key=` keyword. The credential-discipline tests that only proved the
+now-removed API-key-file plumbing have been replaced with tests proving
+the corrected architecture: `--bare` is genuinely absent from every
+command, the documented auth-override env vars are actively scrubbed
+from the child subprocess even when ambiently present in the parent, and
+the non-secret `get_claude_auth_status`/`auth_status` diagnostic reports
+honestly.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -23,12 +35,14 @@ from pathlib import Path
 import pytest
 
 from darwin.workshop.claude_code_mendel_adapter import (
+    _SCRUBBED_ENV_VARS,
     _ZERO_TOOL_ARGS,
     ClaudeCodeMendelAdapter,
     _build_command,
     _child_subprocess_env,
     _proposal_set_json_schema,
     _render_prompt,
+    get_claude_auth_status,
     parse_cli_envelope,
     run_subprocess_with_timeout,
 )
@@ -37,11 +51,16 @@ from darwin.workshop.mendel_domain import InvocationPurpose
 from darwin.workshop.mendel_errors import MendelAdapterTimeoutError
 
 _FAKE_CLAUDE_SCRIPT = """#!/usr/bin/env python3
-import os, sys, time
+import json, os, sys, time
 
 if "--version" in sys.argv:
     print("9.9.9 (Fake Test CLI)")
     sys.exit(0)
+
+dump_path = os.environ.get("FAKE_CLAUDE_ENV_DUMP_PATH")
+if dump_path:
+    with open(dump_path, "w") as f:
+        json.dump(dict(os.environ), f)
 
 sleep_s = os.environ.get("FAKE_CLAUDE_SLEEP")
 if sleep_s:
@@ -68,7 +87,9 @@ def _context(document: dict | None = None) -> BoundedMendelContext:
 
 
 # ============================================================================
-# PID-004C sec11.3 -- the zero-tool boundary is unconditional.
+# PID-004C sec11.3 -- the zero-tool boundary is unconditional. Updated
+# 2026-09-19 for the auth-architecture correction: --bare is gone,
+# --safe-mode + --disallowedTools "mcp__*" are new, unconditional members.
 # ============================================================================
 
 
@@ -76,7 +97,7 @@ def test_zero_tool_flags_always_present_for_every_purpose():
     for purpose in InvocationPurpose:
         cmd = _build_command(
             claude_binary="claude", model="claude-sonnet-5", prompt=f"prompt for {purpose.value}",
-            json_schema=_proposal_set_json_schema(), max_budget_usd="0.10",
+            json_schema=_proposal_set_json_schema(),
         )
         # Every one of the fixed zero-tool tokens appears as a contiguous
         # run inside the constructed command -- never omitted, never
@@ -88,20 +109,38 @@ def test_zero_tool_flags_always_present_for_every_purpose():
         assert cmd[tools_idx + 1] == ""
         pp_idx = cmd.index("--permission-prompts")
         assert cmd[pp_idx + 1] == "none"
+        disallowed_idx = cmd.index("--disallowedTools")
+        assert cmd[disallowed_idx + 1] == "mcp__*"
+        assert "--strict-mcp-config" in cmd
+        assert "--restricted" in cmd
+        assert "--safe-mode" in cmd
 
 
-def test_build_command_includes_output_format_and_schema_and_budget_and_no_persistence():
+def test_bare_flag_is_genuinely_absent_from_every_constructed_command():
+    """Auth-architecture correction (2026-09-19): MENDEL does not use
+    `--bare`. This is a plain architectural invariant -- proven directly,
+    for every purpose in the closed vocabulary, never merely asserted."""
+    for purpose in InvocationPurpose:
+        cmd = _build_command(
+            claude_binary="claude", model="claude-sonnet-5", prompt=f"prompt for {purpose.value}",
+            json_schema=_proposal_set_json_schema(),
+        )
+        assert "--bare" not in cmd
+
+
+def test_build_command_includes_output_format_and_schema_and_no_persistence():
     schema = _proposal_set_json_schema()
     cmd = _build_command(
-        claude_binary="claude", model="claude-sonnet-5", prompt="hello",
-        json_schema=schema, max_budget_usd="0.25",
+        claude_binary="claude", model="claude-sonnet-5", prompt="hello", json_schema=schema,
     )
     assert "--output-format" in cmd
     assert cmd[cmd.index("--output-format") + 1] == "json"
     assert "--json-schema" in cmd
     assert "--no-session-persistence" in cmd
-    assert "--max-budget-usd" in cmd
-    assert cmd[cmd.index("--max-budget-usd") + 1] == "0.25"
+    # --max-budget-usd described API-metered spending against a
+    # separately-provisioned key -- removed entirely, never spliced back
+    # in by any code path.
+    assert "--max-budget-usd" not in cmd
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5"
 
@@ -130,48 +169,69 @@ def test_render_prompt_fences_hostile_source_text_as_data_only():
 
 
 # ============================================================================
-# Credential discipline (PID-004C sec14, WP2 brief) -- never in argv/logs.
+# Auth-override env-var scrub discipline (2026-09-19 correction, replacing
+# the removed per-invocation API-key credential handling): Claude Code's
+# documented auth precedence lets several provider/API env vars outrank
+# normal subscription login -- this module actively scrubs all of them
+# from the CHILD subprocess's environment, never merely leaves them unset.
 # ============================================================================
 
 
-def test_child_subprocess_env_carries_key_only_under_anthropic_api_key_and_never_mutates_os_environ():
-    secret = "sk-test-super-secret-should-never-leak-9f3a"
+def test_child_subprocess_env_is_a_fresh_copy_that_never_mutates_os_environ():
     before = dict(os.environ)
-    env = _child_subprocess_env(secret)
-    assert env["ANTHROPIC_API_KEY"] == secret
+    env = _child_subprocess_env()
     assert env is not os.environ
     # The real process environment is completely untouched.
     assert os.environ == before
-    assert "ANTHROPIC_API_KEY" not in os.environ
 
 
-def test_child_subprocess_env_drops_ambient_key_when_none_configured(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-should-be-dropped")
-    env = _child_subprocess_env(None)
-    assert "ANTHROPIC_API_KEY" not in env
+def test_child_subprocess_env_drops_every_scrubbed_var_when_ambiently_set(monkeypatch):
+    for var in _SCRUBBED_ENV_VARS:
+        monkeypatch.setenv(var, "ambient-should-be-dropped")
+    env = _child_subprocess_env()
+    for var in _SCRUBBED_ENV_VARS:
+        assert var not in env
 
 
-def test_command_construction_never_contains_the_credential():
-    secret = "sk-test-should-never-appear-in-argv-1234567"
-    cmd = _build_command(
-        claude_binary="claude", model="claude-sonnet-5", prompt="a prompt mentioning nothing secret",
-        json_schema=_proposal_set_json_schema(), max_budget_usd="0.10",
+def test_child_subprocess_env_scrub_reaches_the_real_child_subprocess(fake_claude, tmp_path, monkeypatch):
+    """The real, end-to-end proof (mirrors the discipline of the old
+    credential-non-disclosure tests this replaces): set fake values for
+    EVERY scrubbed var in this TEST process's own environment, run a real
+    invocation through a real child subprocess (the fake `claude` script,
+    which dumps the exact environment it received), and assert none of
+    them ever reached the child -- not merely that this adapter's own
+    Python-level dict lacks them."""
+    for var in _SCRUBBED_ENV_VARS:
+        monkeypatch.setenv(var, f"ambient-fake-{var.lower()}-should-never-reach-child")
+
+    dump_path = tmp_path / "child_env.json"
+    monkeypatch.setenv("FAKE_CLAUDE_ENV_DUMP_PATH", str(dump_path))
+    monkeypatch.setenv(
+        "FAKE_CLAUDE_ENVELOPE",
+        '{"is_error": true, "terminal_reason": "api_error", "api_error_status": null, '
+        '"result": "Failed to authenticate", "permission_denials": []}',
     )
-    assert secret not in cmd
-    assert all(secret not in token for token in cmd)
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, timeout_seconds=10)
+    with pytest.raises(RuntimeError):
+        adapter.invoke(context=_context(), purpose=InvocationPurpose.REVIEW_DRAFT, focus_text=None)
+
+    child_env = json.loads(dump_path.read_text())
+    for var in _SCRUBBED_ENV_VARS:
+        assert var not in child_env
 
 
-def test_credential_never_appears_in_adapter_logs(fake_claude, caplog, monkeypatch):
-    secret = "sk-test-log-leak-canary-abcdef123456"
+def test_adapter_invoke_logs_never_contain_ambient_env_values(fake_claude, caplog, monkeypatch):
+    ambient_marker = "ambient-log-leak-canary-abcdef123456"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", ambient_marker)
     monkeypatch.setenv("FAKE_CLAUDE_ENVELOPE", '{"is_error": true, "result": "auth failed", '
                                                 '"terminal_reason": "api_error", "permission_denials": []}')
-    adapter = ClaudeCodeMendelAdapter(api_key=secret, claude_binary=fake_claude, timeout_seconds=10)
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, timeout_seconds=10)
     with caplog.at_level(logging.DEBUG, logger="darwin.workshop.claude_code_mendel_adapter"), \
          pytest.raises(RuntimeError):
         adapter.invoke(context=_context(), purpose=InvocationPurpose.REVIEW_DRAFT, focus_text=None)
-    assert secret not in caplog.text
+    assert ambient_marker not in caplog.text
     for record in caplog.records:
-        assert secret not in record.getMessage()
+        assert ambient_marker not in record.getMessage()
 
 
 # ============================================================================
@@ -198,7 +258,7 @@ def test_run_subprocess_with_timeout_returns_normally_for_a_fast_process():
 
 def test_invoke_raises_timeout_error_through_a_real_hanging_fake_claude(fake_claude, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_SLEEP", "5")
-    adapter = ClaudeCodeMendelAdapter(api_key=None, claude_binary=fake_claude, timeout_seconds=0.3)
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, timeout_seconds=0.3)
     started = time.monotonic()
     with pytest.raises(MendelAdapterTimeoutError):
         adapter.invoke(context=_context(), purpose=InvocationPurpose.REVIEW_DRAFT, focus_text=None)
@@ -284,25 +344,28 @@ def test_parse_cli_envelope_raises_on_malformed_proposal_entry():
 
 
 # ============================================================================
-# Missing/unconfigured credential -- handled cleanly, never a hang/crash.
+# Unauthenticated CLI -- handled cleanly, never a hang/crash. (Renamed from
+# the pre-correction "no credential" framing -- this adapter never
+# configures a credential at all now; the only possible states are
+# "the ambient CLI happens to be authenticated" or not.)
 # ============================================================================
 
 
-def test_invoke_with_no_credential_flows_through_fake_clis_own_auth_failure_cleanly(fake_claude, monkeypatch):
+def test_invoke_with_unauthenticated_cli_flows_through_its_own_auth_failure_cleanly(fake_claude, monkeypatch):
     """Mirrors the real, live behaviour observed against the actual
-    `claude` CLI on this host with no credential configured (see this
-    WP's final report): the CLI reports its OWN auth failure via the
-    envelope's `is_error`/`terminal_reason` fields -- this adapter does
-    NOT special-case "no credential" separately; it is simply one more
-    real CLI-reported failure, handled by the same `parse_cli_envelope`
-    path as any other, cleanly, never a hang or an uncaught crash."""
+    `claude` CLI on this host with no active login (see this WP's final
+    report): the CLI reports its OWN auth failure via the envelope's
+    `is_error`/`terminal_reason` fields -- this adapter does NOT
+    special-case "unauthenticated" separately; it is simply one more real
+    CLI-reported failure, handled by the same `parse_cli_envelope` path as
+    any other, cleanly, never a hang or an uncaught crash."""
     monkeypatch.setenv(
         "FAKE_CLAUDE_ENVELOPE",
         '{"is_error": true, "terminal_reason": "api_error", "api_error_status": null, '
         '"result": "Failed to authenticate: OAuth session expired and could not be refreshed", '
         '"permission_denials": []}',
     )
-    adapter = ClaudeCodeMendelAdapter(api_key=None, claude_binary=fake_claude, timeout_seconds=10)
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, timeout_seconds=10)
     with pytest.raises(RuntimeError, match="authenticate"):
         adapter.invoke(context=_context(), purpose=InvocationPurpose.ANALYSE_AMBIGUITY, focus_text=None)
 
@@ -310,14 +373,14 @@ def test_invoke_with_no_credential_flows_through_fake_clis_own_auth_failure_clea
 def test_invoke_raises_cleanly_on_nonzero_exit_and_garbage_stdout(fake_claude, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_ENVELOPE", "not-json-garbage-output")
     monkeypatch.setenv("FAKE_CLAUDE_EXIT", "2")
-    adapter = ClaudeCodeMendelAdapter(api_key=None, claude_binary=fake_claude, timeout_seconds=10)
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, timeout_seconds=10)
     with pytest.raises(RuntimeError):
         adapter.invoke(context=_context(), purpose=InvocationPurpose.ANALYSE_AMBIGUITY, focus_text=None)
 
 
 def test_adapter_construction_fails_loudly_if_binary_missing():
     with pytest.raises(RuntimeError):
-        ClaudeCodeMendelAdapter(api_key=None, claude_binary="/definitely/not/a/real/claude/binary/xyz")
+        ClaudeCodeMendelAdapter(claude_binary="/definitely/not/a/real/claude/binary/xyz")
 
 
 # ============================================================================
@@ -326,7 +389,7 @@ def test_adapter_construction_fails_loudly_if_binary_missing():
 
 
 def test_provider_identity_is_derived_from_the_fake_clis_own_version_output(fake_claude):
-    adapter = ClaudeCodeMendelAdapter(api_key=None, claude_binary=fake_claude, model="claude-sonnet-5")
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude, model="claude-sonnet-5")
     assert adapter.provider_identity == "claude-code-cli/9.9.9 (Fake Test CLI);model=claude-sonnet-5"
 
 
@@ -336,5 +399,50 @@ def test_provider_identity_is_derived_from_the_real_installed_cli_version():
         ["claude", "--version"], capture_output=True, text=True, timeout=10, check=False,
     ).stdout.strip()
     assert expected, "expected `claude --version` to produce real output on this host"
-    adapter = ClaudeCodeMendelAdapter(api_key=None, claude_binary="claude", model="claude-sonnet-5")
+    adapter = ClaudeCodeMendelAdapter(claude_binary="claude", model="claude-sonnet-5")
     assert adapter.provider_identity == f"claude-code-cli/{expected};model=claude-sonnet-5"
+
+
+# ============================================================================
+# Auth-mode diagnostic (auth-architecture correction item 5) -- non-secret,
+# queryable independently of a full invocation.
+# ============================================================================
+
+
+def test_get_claude_auth_status_reports_cli_missing_cleanly():
+    status = get_claude_auth_status("/definitely/not/a/real/claude/binary/xyz")
+    assert status["cli_installed"] is False
+    assert status["cli_version"] is None
+    assert status["authenticated"] is False
+    assert status["api_key_active"] is False
+
+
+def test_get_claude_auth_status_against_fake_cli_with_no_auth_subcommand_fails_clean(fake_claude):
+    # The fake CLI doesn't implement `auth status` -- it just echoes
+    # FAKE_CLAUDE_ENVELOPE (unset here) to stdout and exits 0, so this
+    # proves the diagnostic degrades cleanly (never crashes, never
+    # fabricates a logged-in state) when the JSON it gets back is empty.
+    status = get_claude_auth_status(fake_claude)
+    assert status["cli_installed"] is True
+    assert status["authenticated"] is False
+    assert status["api_key_active"] is False
+
+
+def test_adapter_auth_status_delegates_to_the_module_level_diagnostic(fake_claude):
+    adapter = ClaudeCodeMendelAdapter(claude_binary=fake_claude)
+    status = adapter.auth_status()
+    assert status == get_claude_auth_status(fake_claude)
+
+
+@pytest.mark.skipif(shutil.which("claude") is None, reason="no real `claude` CLI on PATH")
+def test_get_claude_auth_status_reports_honestly_against_the_real_cli():
+    """Real proof against the actual installed `claude` binary on this
+    host. As of 2026-09-19 there is no active Claude Code subscription/
+    OAuth login for this user -- the diagnostic must report that
+    honestly, never fabricate a logged-in state."""
+    status = get_claude_auth_status("claude")
+    assert status["cli_installed"] is True
+    assert isinstance(status["cli_version"], str) and status["cli_version"]
+    assert status["authenticated"] is False
+    assert status["auth_method"] in ("none", None)
+    assert status["api_key_active"] is False

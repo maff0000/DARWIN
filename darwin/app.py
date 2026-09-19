@@ -428,9 +428,12 @@ def create_app(config: DarwinConfig | None = None) -> FastAPI:
 
     # --- PID-004C MENDEL Workshop Assistant (docs/pids/
     # PID-004C-MENDEL-WORKSHOP-ASSISTANT.md sec12) -- WP1 backend + WP2 real
-    # Claude Code adapter. darwin.workshop.api.register_mendel_routes picks
-    # ClaudeCodeMendelAdapter when cfg.mendel_provider_api_key is configured
-    # (DARWIN_MENDEL_PROVIDER_API_KEY_FILE), else falls back to
+    # Claude Code adapter (auth-architecture correction 2026-09-19: MENDEL
+    # authenticates via Claude Code's own ambient subscription/OAuth login,
+    # never a separately-provisioned API key). darwin.workshop.api.
+    # register_mendel_routes picks ClaudeCodeMendelAdapter when
+    # cfg.mendel_use_real_provider is explicitly opted into
+    # (DARWIN_MENDEL_USE_REAL_PROVIDER=1), else falls back to
     # DeterministicTestMendelAdapter -- an honest, additive, non-fatal
     # default, never a startup requirement. Same process, same mounting
     # discipline as the Workshop routes immediately above.

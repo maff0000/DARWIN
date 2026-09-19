@@ -276,31 +276,36 @@ def register_mendel_routes(
     future deployment-specific override) always wins outright. Absent
     that, PID-004C WP2's own default selection is config-driven and safe:
     `ClaudeCodeMendelAdapter` (the real Claude Code CLI integration) is
-    used ONLY when `cfg.mendel_provider_api_key` is actually configured
-    (`darwin.core.config.resolve_mendel_provider_api_key` -- the
-    `DARWIN_MENDEL_PROVIDER_API_KEY_FILE` secret-file slot); otherwise
-    this falls back to `DeterministicTestMendelAdapter`, an HONEST interim
-    state, not a hidden placeholder -- `darwin_core` must never fail to
-    start, nor silently misbehave, just because MENDEL's real provider
-    credential has not been provisioned yet. Constructing
-    `ClaudeCodeMendelAdapter` itself calls the real `claude` CLI's own
-    `--version` (see that class's docstring) -- if the `claude` binary is
-    missing entirely despite a credential being configured, that failure
-    surfaces here, at startup, not silently deferred to the first
-    invocation.
+    used ONLY when `cfg.mendel_use_real_provider` is explicitly set
+    (`DARWIN_MENDEL_USE_REAL_PROVIDER=1`); otherwise this falls back to
+    `DeterministicTestMendelAdapter`, an HONEST interim state, not a
+    hidden placeholder -- `darwin_core` must never fail to start, nor
+    silently misbehave, just because MENDEL's real provider has not been
+    opted into yet. Auth-architecture correction (2026-09-19): MENDEL no
+    longer configures or uses any separately-provisioned Anthropic API
+    key at all -- `ClaudeCodeMendelAdapter` authenticates entirely via
+    the ambient Claude Code CLI installation's own subscription/OAuth
+    login state, so there is no credential-presence signal left to key
+    adapter selection off; `mendel_use_real_provider` is therefore an
+    explicit opt-in flag, not a "was a secret configured" check.
+    Constructing `ClaudeCodeMendelAdapter` itself calls the real `claude`
+    CLI's own `--version` (see that class's docstring) -- if the `claude`
+    binary is missing entirely despite the real provider being opted
+    into, that failure surfaces here, at startup, not silently deferred
+    to the first invocation.
     """
     if adapter is not None:
         resolved_adapter: MendelAdapter = adapter
     elif cfg.mendel_e2e_fixture_adapter_enabled:
         # PID-004C WP3 -- explicit, narrow, OFF-BY-DEFAULT (darwin.core.
         # config.DarwinConfig.mendel_e2e_fixture_adapter_enabled's own
-        # docstring). Checked BEFORE the real-credential branch below so a
+        # docstring). Checked BEFORE the real-provider branch below so a
         # test environment can never accidentally combine the two.
         resolved_adapter = DeterministicTestMendelAdapter(
             result=_E2E_FIXTURE_RESULT, provider_identity="e2e-fixture-adapter/1.0.0"
         )
-    elif cfg.mendel_provider_api_key:
-        resolved_adapter = ClaudeCodeMendelAdapter(api_key=cfg.mendel_provider_api_key)
+    elif cfg.mendel_use_real_provider:
+        resolved_adapter = ClaudeCodeMendelAdapter()
     else:
         resolved_adapter = DeterministicTestMendelAdapter()
 

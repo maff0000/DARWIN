@@ -7,38 +7,77 @@ on `MendelAdapter`'s typed request/response contract (PID-004C sec11.4);
 this module is a leaf, imported ONLY by the DI-selection point in
 `darwin.workshop.api.register_mendel_routes`.
 
+Auth-architecture correction (2026-09-19): PID-004C's original build used
+a separately-provisioned Anthropic API key passed to the `claude` child
+process as `ANTHROPIC_API_KEY`, with `--bare` forcing API-key-only auth.
+The Architect corrected this: MENDEL runs through Claude Code's existing
+subscription/OAuth authentication, never a separately metered API key.
+MENDEL therefore does NOT use `--bare` -- that is a plain architectural
+invariant now, not something this module configures a workaround for.
+This adapter no longer accepts, stores, or supplies any credential of
+any kind; authentication is handled entirely by the ambient Claude Code
+CLI installation's own login state (`get_claude_auth_status`/
+`ClaudeCodeMendelAdapter.auth_status`).
+
 Zero-tool boundary (PID-004C sec11.3) is UNCONDITIONAL: `_ZERO_TOOL_ARGS`
 below is spliced into every single invocation this module ever makes --
 there is no code path, flag, constructor argument, or "debug mode" here
 that can build a `claude` invocation without it. The verified flag set
-(re-confirmed live against `claude --help` and a real, unauthenticated
-invocation on this exact host, 2026-09-18, CLI version 2.1.273):
+(re-confirmed live against `claude --help` on this exact host, 2026-09-19,
+CLI version 2.1.273):
 
     claude --model <pinned> -p <rendered prompt>
-           --bare --restricted --tools "" --strict-mcp-config
-           --permission-prompts none
+           --restricted --tools "" --disallowedTools "mcp__*"
+           --strict-mcp-config --permission-prompts none --safe-mode
            --output-format json --json-schema <schema>
-           --no-session-persistence --max-budget-usd <cap>
+           --no-session-persistence
 
 `--restricted` removes the command/code-running tools and WebFetch and
 ignores user/project/local settings; `--tools ""` additionally disables
 every remaining built-in tool by name; `--strict-mcp-config` (with no
-`--mcp-config` ever passed) means zero MCP servers load; `--permission-
-prompts none` means anything that would still prompt is denied
-automatically rather than surfaced to a human who isn't there. `--bare`
-additionally confines Claude Code's own auth strictly to
-`ANTHROPIC_API_KEY`/`apiKeyHelper` (never OAuth/keychain) -- see
-`_child_subprocess_env` for exactly how (and only how) that env var is
-supplied to the CHILD process.
+`--mcp-config` ever passed) means zero MCP servers ever LOAD; `
+--disallowedTools "mcp__*"` is defence-in-depth on top of that -- the
+CLI's own internal help text documents `mcp__*` as the pattern that
+denies every MCP server's tools by name, so even if an MCP server were
+ever ambiently configured (a managed/admin setting `--strict-mcp-config`
+does not override), none of its tools would be callable either.
+`--permission-prompts none` means anything that would still prompt is
+denied automatically rather than surfaced to a human who isn't there --
+this is defence-in-depth, not the primary containment layer: with zero
+tools available (`--tools ""`/`--restricted`) and zero MCP tools reachable
+(`--strict-mcp-config`/`--disallowedTools "mcp__*"`), there is nothing left
+that could ever reach a permission prompt in the first place. `--safe-mode`
+replaces `--bare`'s non-auth isolation properties (ambient CLAUDE.md,
+skills, plugins, hooks, MCP servers, custom commands/agents, output
+styles, workflows all disabled) without `--bare`'s auth restriction --
+this is the flag that keeps MENDEL from ever inheriting DARWIN's or the
+host's own CLAUDE.md/persona instructions (this exact engagement
+previously hit a real "fork identity confusion" failure mode from
+ambient CLAUDE.md leaking into an agent's context).
 
-Credential discipline (PID-004C sec14, this WP's own brief): the API key
-is passed to the `claude` subprocess ONLY via that child's own `env`
-mapping (`subprocess.run(..., env=...)`), built as a fresh dict copy --
-this process's OWN `os.environ` is never mutated, the key never appears
-in `argv` (so never in a `ps`/process-listing), and no logger call in
-this module ever includes the key, the full command line, the full
-rendered prompt, or the full subprocess environment -- only bounded
-metadata (model, timeout, exit code, purpose) per PID-004C sec16.
+Env-var scrub (Claude Code's documented auth precedence lets several
+provider/API environment variables outrank normal subscription login --
+see `_SCRUBBED_ENV_VARS`/`_child_subprocess_env`): this process's OWN
+environment is not trusted. Every var in `_SCRUBBED_ENV_VARS` is
+actively removed from the CHILD subprocess's environment mapping if
+present in the parent, never merely left unset, so MENDEL can never be
+silently redirected onto a different auth/billing path by whatever
+happens to be ambient in `darwin_core`'s own process environment.
+
+Boundedness: `--max-turns` does not exist in this CLI version (verified
+directly against a full, real `claude --help` on this host, 2026-09-19 --
+no such flag, and no equivalent for bounding agentic "turns"). This is
+not a gap this adapter needs to fill: `-p` (print mode) combined with
+`--tools ""` (no tool exists that could trigger a follow-up turn)
+structurally produces exactly one model response and exits -- there is
+no autonomous loop, no retry, no recursive call anywhere in this
+adapter's own code. `DEFAULT_TIMEOUT_SECONDS`, enforced by
+`subprocess.run`'s own `timeout=` via `run_subprocess_with_timeout`, is
+therefore the actual (and sufficient) bounding mechanism for a single
+invocation -- not a bare hope, a real OS-level kill. `--max-budget-usd`
+(API-metered spending) has been removed for the same reason it no longer
+fits: it describes per-call dollar spend against a metered API key, which
+does not exist in a subscription-backed architecture.
 
 Output handling: this module's ONLY responsibility is turning "real CLI
 output" into the SAME loosely-typed `RawMendelProposal`/
@@ -70,15 +109,20 @@ logger = logging.getLogger(__name__)
 
 #: PID-004C sec11.3 -- the unconditional zero-model-exposed-tool flag set.
 #: Spliced into EVERY invocation this module makes; never optional, never
-#: conditionally omitted.
+#: conditionally omitted. See module docstring for the reasoning behind
+#: each token, including the 2026-09-19 auth-architecture correction
+#: (`--bare` removed, `--safe-mode` added) and the `--disallowedTools
+#: "mcp__*"` defence-in-depth addition.
 _ZERO_TOOL_ARGS: tuple[str, ...] = (
-    "--bare",
     "--restricted",
     "--tools",
     "",
+    "--disallowedTools",
+    "mcp__*",
     "--strict-mcp-config",
     "--permission-prompts",
     "none",
+    "--safe-mode",
 )
 
 #: A pinned, specific model name (never a bare alias like "sonnet" --
@@ -87,22 +131,29 @@ _ZERO_TOOL_ARGS: tuple[str, ...] = (
 #: gives a reproducible, recorded version string for `provider_identity`).
 DEFAULT_MODEL = "claude-sonnet-5"
 
-#: A real invocation is a cost-bearing external call -- this default is a
-#: deliberately small, sane per-invocation cap, overridable per adapter
-#: instance.
-DEFAULT_MAX_BUDGET_USD = "0.50"
-
 #: A finite, bounded per-invocation timeout (PID-004C sec11.1: "no
 #: unconstrained autonomous loop"), enforced by `subprocess.run`'s own
-#: `timeout=` mechanism (PID-004C WP2 brief: "not a bare hope").
+#: `timeout=` mechanism (PID-004C WP2 brief: "not a bare hope"). With
+#: `--max-turns` unavailable in this CLI version and `--max-budget-usd`
+#: architecturally wrong for a subscription-backed provider, this is now
+#: the SOLE explicit bound on a single invocation -- sufficient because
+#: `-p`/`--tools ""` already make the invocation structurally single-shot
+#: (see module docstring's "Boundedness" section).
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
-#: The env var name Claude Code's own `--bare` mode reads for API-key auth
-#: (confirmed from `claude --help`'s `--bare` description: "Anthropic auth
-#: is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings"). This
-#: module never uses `--settings`/`apiKeyHelper` -- only this env var, and
-#: only on the CHILD subprocess's own environment mapping.
-_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+#: Env vars Claude Code's own documented auth precedence lets override
+#: normal subscription/OAuth login (API keys, auth tokens, third-party
+#: provider routing, and base-URL/profile overrides). Never trusted from
+#: this process's own environment -- see `_child_subprocess_env`.
+_SCRUBBED_ENV_VARS: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_PROFILE",
+)
 
 
 def _proposal_set_json_schema() -> dict:
@@ -246,9 +297,9 @@ def _render_prompt(*, context: BoundedMendelContext, purpose: InvocationPurpose,
     instruction, regardless of its own wording or claimed authority.
 
     `focus_text` is deliberately placed INSIDE the fence alongside
-    `context.document`, never quoted/echoed in the trusted preamble above
-    it -- even though PID-004C sec11.1.1 frames operator focus text as
-    bounded/narrowing rather than as hostile "source material", it is
+    `context.document`, never quoted/echoed in the trusted preamble
+    above it -- even though PID-004C sec11.1.1 frames operator focus text
+    as bounded/narrowing rather than as hostile "source material", it is
     still free-form text a human typed, and `darwin.workshop.
     mendel_context.build_bounded_context` already carries it as part of
     `context.document` for exactly this reason (see WP1's own
@@ -291,9 +342,7 @@ def _render_prompt(*, context: BoundedMendelContext, purpose: InvocationPurpose,
     )
 
 
-def _build_command(
-    *, claude_binary: str, model: str, prompt: str, json_schema: dict, max_budget_usd: str
-) -> list[str]:
+def _build_command(*, claude_binary: str, model: str, prompt: str, json_schema: dict) -> list[str]:
     """Constructs the full argv for one invocation. `_ZERO_TOOL_ARGS` is
     ALWAYS spliced in -- there is no parameter to this function, or any
     caller of it in this module, that can omit it."""
@@ -305,23 +354,27 @@ def _build_command(
         "--output-format", "json",
         "--json-schema", json.dumps(json_schema, sort_keys=True),
         "--no-session-persistence",
-        "--max-budget-usd", max_budget_usd,
     ]
 
 
-def _child_subprocess_env(api_key: str | None) -> dict[str, str]:
+def _child_subprocess_env() -> dict[str, str]:
     """Builds the CHILD subprocess's own environment mapping -- a fresh
     copy of this process's environment, never a mutation of `os.environ`
     itself (so the parent process's own live environment, and every OTHER
-    child it might launch, is completely unaffected). Any ambient
-    `ANTHROPIC_API_KEY` already present in this process's environment is
-    deliberately dropped first, so behaviour never depends on incidental
-    parent-process state -- the only key that can ever reach the child is
-    the one this adapter was explicitly constructed with."""
+    child it might launch, is completely unaffected). Every var in
+    `_SCRUBBED_ENV_VARS` is actively removed if present -- never merely
+    left unset -- because `darwin_core`'s own process environment is not
+    something this module controls or should trust: Claude Code's
+    documented auth precedence lets several of these silently outrank
+    normal subscription/OAuth login, and this adapter must never let
+    MENDEL be redirected onto a different auth/billing path by whatever
+    happens to be ambient in the parent process. This adapter no longer
+    supplies ANY credential of its own -- authentication is exactly
+    whatever the ambient `claude` CLI installation's own login state is
+    (see `get_claude_auth_status`)."""
     env = dict(os.environ)
-    env.pop(_ANTHROPIC_API_KEY_ENV, None)
-    if api_key:
-        env[_ANTHROPIC_API_KEY_ENV] = api_key
+    for var in _SCRUBBED_ENV_VARS:
+        env.pop(var, None)
     return env
 
 
@@ -363,6 +416,68 @@ def _detect_claude_cli_version(claude_binary: str) -> str:
     return version_text
 
 
+def get_claude_auth_status(claude_binary: str = "claude") -> dict[str, object]:
+    """Non-secret auth-mode diagnostic (auth-architecture correction
+    item 5): runs the real `claude auth status --json` subprocess and
+    reports ONLY non-secret metadata -- installed (bool) + version,
+    authenticated (bool), login method (subscription/OAuth vs. none vs.
+    whatever else the real CLI reports), and whether an API-key-based
+    auth method is active. NEVER extracts, logs, or persists actual
+    credential material, and never reads `~/.claude/.credentials.json`'s
+    contents directly -- only the CLI's own `auth status` subcommand,
+    which is documented (`claude auth --help`) as the non-secret
+    diagnostic surface for exactly this purpose.
+
+    Queryable independently of running a full MENDEL invocation (a bare
+    module-level function, and `ClaudeCodeMendelAdapter.auth_status`
+    below just delegates to it), so ROGUE/HELM can prove auth state
+    without needing a successful invocation.
+    """
+    try:
+        proc = subprocess.run(
+            [claude_binary, "auth", "status", "--json"],
+            capture_output=True, text=True, timeout=15.0, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "cli_installed": False, "cli_version": None,
+            "authenticated": False, "auth_method": None,
+            "api_key_active": False, "error": str(exc),
+        }
+    try:
+        cli_version: str | None = _detect_claude_cli_version(claude_binary)
+        version_error: str | None = None
+    except RuntimeError as exc:
+        cli_version = None
+        version_error = str(exc)
+
+    text = (proc.stdout or "").strip()
+    try:
+        status = json.loads(text) if text else {}
+    except json.JSONDecodeError:
+        status = {}
+    if not isinstance(status, dict):
+        status = {}
+
+    auth_method = status.get("authMethod")
+    result: dict[str, object] = {
+        "cli_installed": cli_version is not None,
+        "cli_version": cli_version,
+        "authenticated": bool(status.get("loggedIn", False)),
+        "auth_method": auth_method,
+        # True only when the CLI itself reports an API-key-based auth
+        # method -- never derived from this process's own environment
+        # (which is scrubbed for the CHILD subprocess separately, see
+        # `_SCRUBBED_ENV_VARS`/`_child_subprocess_env`; this diagnostic
+        # reflects the CLI's actual resolved auth state, not this
+        # process's ambient env).
+        "api_key_active": auth_method == "apiKey",
+    }
+    if version_error:
+        result["cli_version_error"] = version_error
+    return result
+
+
 def _raw_proposal_from_object(entry: object) -> RawMendelProposal:
     if not isinstance(entry, dict):
         raise TypeError(f"claude subprocess produced a non-object proposal entry: {entry!r}")
@@ -387,14 +502,15 @@ def parse_cli_envelope(stdout: str, *, returncode: int, stderr: str) -> MendelIn
     catches uniformly) for every failure mode this adapter must turn into
     a governed `MendelRun` FAILED state (PID-004C sec17) -- non-zero exit,
     empty/non-JSON stdout, the envelope's own `is_error` flag (covers
-    auth failure, budget-exceeded, and every other CLI-reported error
-    uniformly -- there is deliberately no special-cased "missing
-    credential" branch here: an unconfigured/empty credential simply
-    reaches the real CLI as no `ANTHROPIC_API_KEY`, which the CLI itself
-    reports as its own auth failure, exactly like any other genuine CLI
-    error), or a structured result that does not match the shape this
-    adapter declared via `--json-schema`. NEVER returns a fabricated
-    "empty success" -- every path here either returns a genuinely parsed
+    auth failure and every other CLI-reported error uniformly -- there is
+    deliberately no special-cased "missing credential" branch here: an
+    unauthenticated Claude Code session (no active subscription/OAuth
+    login, and no scrubbed-back-in API key -- see `_child_subprocess_env`)
+    simply reaches the real CLI as-is, which the CLI itself reports as its
+    own auth failure, exactly like any other genuine CLI error), or a
+    structured result that does not match the shape this adapter declared
+    via `--json-schema`. NEVER returns a fabricated "empty success" --
+    every path here either returns a genuinely parsed
     `MendelInvocationResult` or raises.
     """
     text = stdout.strip()
@@ -420,9 +536,9 @@ def parse_cli_envelope(stdout: str, *, returncode: int, stderr: str) -> MendelIn
     # the schema-validated object under a dedicated key or directly as
     # `result` (rather than `result`'s ordinary plain-text-summary shape)
     # when `--json-schema` was supplied -- this adapter accepts either,
-    # since no working credential exists on this host to observe a real
-    # success envelope and settle the question definitively (see this
-    # WP's final report's honest-disclosure section).
+    # since no authenticated session exists on this host to observe a
+    # real success envelope and settle the question definitively (see
+    # this WP's final report's honest-disclosure section).
     structured = envelope.get("structured_result", envelope.get("result"))
     if isinstance(structured, str):
         try:
@@ -447,26 +563,25 @@ def parse_cli_envelope(stdout: str, *, returncode: int, stderr: str) -> MendelIn
 
 class ClaudeCodeMendelAdapter(MendelAdapter):
     """The real Claude Code specialist integration (PID-004C sec11.4).
-    Constructed with the resolved provider credential (or `None` --
-    see module docstring: this adapter does NOT pre-emptively refuse when
-    unconfigured, it defers to the real CLI's own auth check, which is
-    reachable and provable even without a working credential -- see
+
+    Constructed with NO credential of any kind -- authentication is
+    handled entirely by the ambient Claude Code CLI installation's own
+    subscription/OAuth login state (see `get_claude_auth_status`/
+    `auth_status`). This adapter does NOT pre-emptively refuse when
+    unauthenticated: it defers to the real CLI's own auth check, which is
+    reachable and provable even without an active login -- see
     `run_subprocess_with_timeout`/`parse_cli_envelope` and this WP's
-    prompt-injection-against-the-real-CLI proof)."""
+    prompt-injection-against-the-real-CLI proof."""
 
     def __init__(
         self,
         *,
-        api_key: str | None,
         model: str = DEFAULT_MODEL,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-        max_budget_usd: str = DEFAULT_MAX_BUDGET_USD,
         claude_binary: str = "claude",
     ) -> None:
-        self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
-        self._max_budget_usd = max_budget_usd
         self._claude_binary = claude_binary
         self._cli_version = _detect_claude_cli_version(claude_binary)
 
@@ -474,19 +589,23 @@ class ClaudeCodeMendelAdapter(MendelAdapter):
     def provider_identity(self) -> str:
         return f"claude-code-cli/{self._cli_version};model={self._model}"
 
+    def auth_status(self) -> dict[str, object]:
+        """Delegates to `get_claude_auth_status` for this adapter's own
+        `claude_binary` -- see that function's docstring."""
+        return get_claude_auth_status(self._claude_binary)
+
     def invoke(
         self, *, context: BoundedMendelContext, purpose: InvocationPurpose, focus_text: str | None
     ) -> MendelInvocationResult:
         prompt = _render_prompt(context=context, purpose=purpose, focus_text=focus_text)
         cmd = _build_command(
             claude_binary=self._claude_binary, model=self._model, prompt=prompt,
-            json_schema=_proposal_set_json_schema(), max_budget_usd=self._max_budget_usd,
+            json_schema=_proposal_set_json_schema(),
         )
-        env = _child_subprocess_env(self._api_key)
+        env = _child_subprocess_env()
         logger.info(
-            "ClaudeCodeMendelAdapter invoking claude CLI: model=%s purpose=%s timeout_s=%s "
-            "credential_configured=%s",
-            self._model, purpose.value, self._timeout_seconds, bool(self._api_key),
+            "ClaudeCodeMendelAdapter invoking claude CLI: model=%s purpose=%s timeout_s=%s",
+            self._model, purpose.value, self._timeout_seconds,
         )
         try:
             proc = run_subprocess_with_timeout(cmd, env=env, timeout_seconds=self._timeout_seconds)
@@ -500,6 +619,7 @@ class ClaudeCodeMendelAdapter(MendelAdapter):
 
 __all__ = [
     "ClaudeCodeMendelAdapter",
+    "get_claude_auth_status",
     "parse_cli_envelope",
     "run_subprocess_with_timeout",
 ]
