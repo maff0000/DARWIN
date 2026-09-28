@@ -20,7 +20,10 @@ from enum import StrEnum
 
 from darwin.core.identities import new_id
 from darwin.research_contracts.errors import InvalidConfigurationError
-from darwin.research_contracts.input_binding import ResearchInputBinding
+from darwin.research_contracts.input_binding import (
+    ResearchInputBinding,
+    verify_research_input_binding_fingerprint,
+)
 from darwin.specification.fingerprint import canonical_hash
 
 
@@ -84,6 +87,10 @@ def build_research_partition_policy_version(
         raise InvalidConfigurationError(
             f"ResearchPartitionPolicyVersion requires a ResearchInputBinding, got {type(input_binding)!r}"
         )
+    # PID-006A CA-2 (adversarial-audit follow-up): never trust an
+    # existing ResearchInputBinding's own fingerprint at face value --
+    # independently reprove it against its own raw fields first.
+    verify_research_input_binding_fingerprint(input_binding)
     fingerprint = compute_research_partition_policy_fingerprint(role=role, input_binding=input_binding)
     return ResearchPartitionPolicyVersion(
         partition_policy_id=new_id(),

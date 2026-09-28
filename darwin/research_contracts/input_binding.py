@@ -88,6 +88,40 @@ def compute_research_input_binding_fingerprint(
     )
 
 
+def verify_research_input_binding_fingerprint(binding: ResearchInputBinding) -> None:
+    """THE one canonical self-consistency check for an existing
+    `ResearchInputBinding` (PID-006A CA-2, adversarial-audit follow-up on
+    PR #18). Recomputes the fingerprint from `binding`'s own raw fields
+    and compares it against `binding.fingerprint` -- never trusts a
+    passed-in or previously-stored fingerprint value without
+    independently reproducing it first.
+
+    Reused everywhere an EXISTING `ResearchInputBinding` is trusted as
+    semantic input, rather than freshly built by
+    `build_research_input_binding`/`research_input_binding_from_market_dataset`
+    (which are already self-consistent by construction and never need
+    this call on their own output): `build_research_partition_policy_version`,
+    `build_research_configuration`, and
+    `darwin.research_store.research_contracts_repositories`'s persistence
+    reconstruction for both partition policies and research
+    configurations. There is exactly one implementation -- callers never
+    re-derive this comparison by hand.
+    """
+    recomputed = compute_research_input_binding_fingerprint(
+        logical_input_role=binding.logical_input_role,
+        input_kind=binding.input_kind,
+        governed_dataset_id=binding.governed_dataset_id,
+        dataset_semantic_fingerprint=binding.dataset_semantic_fingerprint,
+    )
+    if recomputed != binding.fingerprint:
+        raise ResearchInputBindingError(
+            f"ResearchInputBinding {binding.input_binding_id!r} fingerprint "
+            f"{binding.fingerprint!r} does not match the fingerprint recomputed from its own "
+            f"raw fields ({recomputed!r}) -- refusing to trust an internally-inconsistent "
+            f"binding (PID-006A CA-2)"
+        )
+
+
 def build_research_input_binding(
     *,
     logical_input_role: str,

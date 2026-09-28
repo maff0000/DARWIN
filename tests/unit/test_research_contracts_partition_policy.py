@@ -2,6 +2,7 @@
 (docs/pids/PID-006-APOLLO.md sec9/sec10)."""
 from __future__ import annotations
 
+import dataclasses
 from datetime import timedelta
 
 import pytest
@@ -13,6 +14,7 @@ from darwin.research_contracts.errors import (
     ResearchInputBindingError,
 )
 from darwin.research_contracts.input_binding import (
+    ResearchInputBinding,
     ResearchInputKind,
     build_research_input_binding,
     research_input_binding_from_market_dataset,
@@ -126,3 +128,53 @@ def test_invalid_role_rejected() -> None:
     binding = _binding()
     with pytest.raises(InvalidConfigurationError):
         build_research_partition_policy_version(role="NOT_A_REAL_ROLE", input_binding=binding)  # type: ignore[arg-type]
+
+
+# --- CA-2 (adversarial-audit follow-up, PR #18): nested ResearchInputBinding
+# fingerprint must be independently re-verified, never trusted at face value
+# ------------------------------------------------------------------------------
+
+
+def test_tampered_governed_dataset_id_with_stale_fingerprint_rejected() -> None:
+    """A ResearchInputBinding whose governed_dataset_id was changed after
+    the fact, with its OLD (now-stale) fingerprint left in place, must be
+    rejected the moment it is trusted as semantic input by partition-policy
+    construction -- never silently accepted because the fingerprint field
+    itself was untouched."""
+    binding = _binding()
+    tampered = dataclasses.replace(binding, governed_dataset_id="ds-attacker-substituted")
+    with pytest.raises(ResearchInputBindingError):
+        build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=tampered)
+
+
+def test_tampered_dataset_semantic_fingerprint_with_stale_fingerprint_rejected() -> None:
+    binding = _binding()
+    tampered = dataclasses.replace(binding, dataset_semantic_fingerprint="deadbeef" * 8)
+    with pytest.raises(ResearchInputBindingError):
+        build_research_partition_policy_version(role=ResearchPartitionRole.VALIDATION, input_binding=tampered)
+
+
+def test_tampered_logical_input_role_with_stale_fingerprint_rejected() -> None:
+    binding = _binding()
+    tampered = dataclasses.replace(binding, logical_input_role="SECRETLY_DIFFERENT_ROLE")
+    with pytest.raises(ResearchInputBindingError):
+        build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=tampered)
+
+
+def test_hand_constructed_binding_with_invalid_fingerprint_rejected_by_partition_policy() -> None:
+    """A ResearchInputBinding built directly via the dataclass constructor
+    (bypassing build_research_input_binding entirely) with an outright
+    invalid fingerprint must still be rejected -- the check is against the
+    binding's OWN raw fields, not against how it happened to be
+    constructed."""
+    forged = ResearchInputBinding(
+        input_binding_id="forged-1",
+        logical_input_role="PRIMARY_MARKET_DATA",
+        input_kind=ResearchInputKind.MARKET_CANDLE_DATASET,
+        governed_dataset_id="ds-forged",
+        dataset_semantic_fingerprint="0" * 64,
+        fingerprint="not-a-real-fingerprint",
+    )
+    with pytest.raises(ResearchInputBindingError):
+        build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=forged)
+

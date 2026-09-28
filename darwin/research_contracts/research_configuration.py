@@ -25,7 +25,10 @@ from darwin.research_contracts.errors import (
     ResearchConfigurationInconsistentError,
 )
 from darwin.research_contracts.execution_policy import ExecutionPolicyVersion
-from darwin.research_contracts.input_binding import ResearchInputBinding
+from darwin.research_contracts.input_binding import (
+    ResearchInputBinding,
+    verify_research_input_binding_fingerprint,
+)
 from darwin.research_contracts.parameter_set import ParameterSetVersion
 from darwin.research_contracts.partition_policy import ResearchPartitionPolicyVersion
 from darwin.specification.domain import StrategyVersion
@@ -169,6 +172,20 @@ def build_research_configuration(
       `darwin.core.errors.DikePolicyBindingError` already governs
       elsewhere in DARWIN (DISABLED carries no policy identity; GUARDED
       requires one) -- reused directly, not re-derived.
+    - every `ResearchInputBinding` in `research_input_bindings`, and
+      `partition_policy.input_binding`, must independently re-verify its
+      own fingerprint against its own raw fields (PID-006A CA-2) -- an
+      existing binding's stored `.fingerprint` is never trusted at face
+      value.
+    - `research_input_bindings` must contain no duplicate binding
+      fingerprint and no duplicate `logical_input_role` (PID-006A CA-1
+      items 3/4) -- two different datasets claiming the identical logical
+      role in one configuration is ambiguous and is rejected outright.
+    - `partition_policy.input_binding` must be bound to exactly one of
+      this configuration's own `research_input_bindings` (PID-006A CA-1
+      item 2) -- a partition policy governing a dataset this configuration
+      never declared as an input is a structurally contradictory
+      configuration.
     """
     if executable_plan.source_semantic_fingerprint != strategy_version.semantic_fingerprint:
         raise ResearchConfigurationInconsistentError(
@@ -190,6 +207,44 @@ def build_research_configuration(
         raise DikePolicyBindingError("DIKE_GUARDED requires a DIKE policy fingerprint")
     if not research_input_bindings:
         raise InvalidConfigurationError("ResearchConfiguration requires at least one ResearchInputBinding")
+
+    # PID-006A CA-2 (adversarial-audit follow-up): every ResearchInputBinding
+    # trusted as semantic input here -- both the declared input set and the
+    # partition policy's own bound input -- must independently re-verify its
+    # own fingerprint against its own raw fields before anything downstream
+    # ever trusts it. This is also how CA-1 item 1 is satisfied.
+    for binding in research_input_bindings:
+        verify_research_input_binding_fingerprint(binding)
+    verify_research_input_binding_fingerprint(partition_policy.input_binding)
+
+    # PID-006A CA-1 item 3: no duplicate ResearchInputBinding fingerprints.
+    binding_fingerprints = [binding.fingerprint for binding in research_input_bindings]
+    if len(set(binding_fingerprints)) != len(binding_fingerprints):
+        raise ResearchConfigurationInconsistentError(
+            "research_input_bindings contains duplicate ResearchInputBinding fingerprints -- "
+            "the identical governed input must not be declared twice in one configuration"
+        )
+
+    # PID-006A CA-1 item 4: no duplicate logical_input_role values -- two
+    # different datasets claiming the identical logical role is ambiguous.
+    logical_roles = [binding.logical_input_role for binding in research_input_bindings]
+    if len(set(logical_roles)) != len(logical_roles):
+        raise ResearchConfigurationInconsistentError(
+            "research_input_bindings contains duplicate logical_input_role values -- two "
+            "different datasets claiming the identical logical role in one configuration is "
+            "ambiguous and is never silently accepted"
+        )
+
+    # PID-006A CA-1 item 2: the partition policy's own bound input must
+    # actually be one of this configuration's declared research_input_bindings
+    # -- never a dataset this configuration never declared as an input.
+    if partition_policy.input_binding.fingerprint not in binding_fingerprints:
+        raise ResearchConfigurationInconsistentError(
+            "ResearchPartitionPolicyVersion is bound to ResearchInputBinding fingerprint "
+            f"{partition_policy.input_binding.fingerprint!r}, which does not match any entry in "
+            "research_input_bindings -- a partition policy governing an undeclared input is a "
+            "structurally contradictory configuration"
+        )
 
     fingerprint = compute_research_configuration_fingerprint(
         configuration_schema_version=CONFIGURATION_SCHEMA_VERSION,

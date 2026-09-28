@@ -14,6 +14,7 @@ from darwin.research_contracts.compiler import CanonicalStrategyCompiler
 from darwin.research_contracts.errors import (
     InvalidConfigurationError,
     ResearchConfigurationInconsistentError,
+    ResearchInputBindingError,
 )
 from darwin.research_contracts.execution_policy import (
     ZERO_COST,
@@ -22,6 +23,8 @@ from darwin.research_contracts.execution_policy import (
     build_execution_policy_version,
 )
 from darwin.research_contracts.input_binding import (
+    ResearchInputBinding,
+    ResearchInputKind,
     research_input_binding_from_market_dataset,
 )
 from darwin.research_contracts.parameter_set import build_parameter_set_version
@@ -252,3 +255,141 @@ def test_requires_at_least_one_input_binding() -> None:
             execution_policy=_execution_policy(),
             dike_state=DikeState.DISABLED,
         )
+
+
+# --- CA-1 (adversarial-audit follow-up, PR #18): ResearchConfiguration must
+# bind its partition policy to its actual declared input set
+# ------------------------------------------------------------------------------
+
+
+def test_partition_policy_bound_to_declared_dataset_succeeds() -> None:
+    """Baseline positive control for CA-1: a partition policy bound to
+    Dataset A, in a configuration whose research_input_bindings also
+    declares Dataset A, succeeds."""
+    binding = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA", market_dataset=_dataset("ds-ca1-a")
+    )
+    partition_policy = build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=binding)
+    strategy_version = _strategy_version("sv-ca1-positive")
+    config = build_research_configuration(
+        strategy_version=strategy_version,
+        executable_plan=CanonicalStrategyCompiler().compile(strategy_version),
+        parameter_set=build_parameter_set_version(strategy_version, ()),
+        instrument_definition=get_instrument_definition("XAU_USD"),
+        research_input_bindings=(binding,),
+        partition_policy=partition_policy,
+        execution_policy=_execution_policy(),
+        dike_state=DikeState.DISABLED,
+    )
+    assert config.research_partition_policy_fingerprint == partition_policy.fingerprint
+
+
+def test_partition_policy_bound_to_undeclared_dataset_rejected() -> None:
+    """CA-1 core case: a partition policy bound to Dataset B, in a
+    configuration whose research_input_bindings only declares Dataset A,
+    is a structurally contradictory configuration and must be rejected."""
+    binding_a = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA", market_dataset=_dataset("ds-ca1-only-a")
+    )
+    binding_b = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA", market_dataset=_dataset("ds-ca1-unrelated-b")
+    )
+    partition_policy_for_b = build_research_partition_policy_version(
+        role=ResearchPartitionRole.DEVELOPMENT, input_binding=binding_b
+    )
+    strategy_version = _strategy_version("sv-ca1-negative")
+    with pytest.raises(ResearchConfigurationInconsistentError):
+        build_research_configuration(
+            strategy_version=strategy_version,
+            executable_plan=CanonicalStrategyCompiler().compile(strategy_version),
+            parameter_set=build_parameter_set_version(strategy_version, ()),
+            instrument_definition=get_instrument_definition("XAU_USD"),
+            research_input_bindings=(binding_a,),  # only Dataset A declared
+            partition_policy=partition_policy_for_b,  # but policy governs Dataset B
+            execution_policy=_execution_policy(),
+            dike_state=DikeState.DISABLED,
+        )
+
+
+def test_duplicate_binding_fingerprint_rejected() -> None:
+    """CA-1 item 3: the identical ResearchInputBinding must not be
+    declared twice in one configuration's research_input_bindings."""
+    binding = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA", market_dataset=_dataset("ds-ca1-dup")
+    )
+    partition_policy = build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=binding)
+    strategy_version = _strategy_version("sv-ca1-dup-fp")
+    with pytest.raises(ResearchConfigurationInconsistentError):
+        build_research_configuration(
+            strategy_version=strategy_version,
+            executable_plan=CanonicalStrategyCompiler().compile(strategy_version),
+            parameter_set=build_parameter_set_version(strategy_version, ()),
+            instrument_definition=get_instrument_definition("XAU_USD"),
+            research_input_bindings=(binding, binding),  # same binding twice
+            partition_policy=partition_policy,
+            execution_policy=_execution_policy(),
+            dike_state=DikeState.DISABLED,
+        )
+
+
+def test_duplicate_logical_input_role_rejected() -> None:
+    """CA-1 item 4: two DIFFERENT datasets both claiming the same
+    logical_input_role in one configuration is ambiguous and must never
+    be silently accepted."""
+    binding_a = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA", market_dataset=_dataset("ds-ca1-role-a")
+    )
+    binding_b = research_input_binding_from_market_dataset(
+        logical_input_role="PRIMARY_MARKET_DATA",  # same role, different dataset
+        market_dataset=_dataset("ds-ca1-role-b"),
+    )
+    partition_policy = build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=binding_a)
+    strategy_version = _strategy_version("sv-ca1-dup-role")
+    with pytest.raises(ResearchConfigurationInconsistentError):
+        build_research_configuration(
+            strategy_version=strategy_version,
+            executable_plan=CanonicalStrategyCompiler().compile(strategy_version),
+            parameter_set=build_parameter_set_version(strategy_version, ()),
+            instrument_definition=get_instrument_definition("XAU_USD"),
+            research_input_bindings=(binding_a, binding_b),
+            partition_policy=partition_policy,
+            execution_policy=_execution_policy(),
+            dike_state=DikeState.DISABLED,
+        )
+
+
+# --- CA-2 item 5 (adversarial-audit follow-up, PR #18) ----------------------
+
+
+def test_hand_constructed_binding_with_invalid_fingerprint_rejected_by_configuration() -> None:
+    """CA-2 item 5: a ResearchInputBinding with an outright invalid
+    fingerprint, presented directly to ResearchConfiguration construction
+    (bypassing build_research_input_binding), must be rejected -- never
+    silently trusted as semantic input."""
+    forged = ResearchInputBinding(
+        input_binding_id="forged-cfg-1",
+        logical_input_role="PRIMARY_MARKET_DATA",
+        input_kind=ResearchInputKind.MARKET_CANDLE_DATASET,
+        governed_dataset_id="ds-forged-cfg",
+        dataset_semantic_fingerprint="1" * 64,
+        fingerprint="not-a-real-fingerprint",
+    )
+    legit_binding = research_input_binding_from_market_dataset(
+        logical_input_role="SECONDARY_CONTEXT", market_dataset=_dataset("ds-ca2-legit")
+    )
+    partition_policy = build_research_partition_policy_version(
+        role=ResearchPartitionRole.DEVELOPMENT, input_binding=legit_binding
+    )
+    strategy_version = _strategy_version("sv-ca2-forged")
+    with pytest.raises(ResearchInputBindingError):
+        build_research_configuration(
+            strategy_version=strategy_version,
+            executable_plan=CanonicalStrategyCompiler().compile(strategy_version),
+            parameter_set=build_parameter_set_version(strategy_version, ()),
+            instrument_definition=get_instrument_definition("XAU_USD"),
+            research_input_bindings=(legit_binding, forged),
+            partition_policy=partition_policy,
+            execution_policy=_execution_policy(),
+            dike_state=DikeState.DISABLED,
+        )
+

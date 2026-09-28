@@ -46,6 +46,7 @@ from darwin.research_contracts.execution_policy import (
 from darwin.research_contracts.input_binding import (
     ResearchInputBinding,
     ResearchInputKind,
+    verify_research_input_binding_fingerprint,
 )
 from darwin.research_contracts.parameter_set import compute_parameter_set_fingerprint
 from darwin.research_contracts.partition_policy import (
@@ -354,6 +355,12 @@ class ResearchPartitionPolicyVersionRepository:
             dataset_semantic_fingerprint=record.input_binding["dataset_semantic_fingerprint"],
             fingerprint=record.input_binding["fingerprint"],
         )
+        # PID-006A CA-2 (adversarial-audit follow-up): prove the nested
+        # ResearchInputBinding is internally self-consistent BEFORE trusting
+        # its fingerprint as an input to the parent recompute below -- a
+        # corrupted raw field with its old embedded child fingerprint left
+        # untouched would otherwise escape parent-level tamper detection.
+        verify_research_input_binding_fingerprint(rebuilt_binding)
         recomputed = compute_research_partition_policy_fingerprint(
             role=ResearchPartitionRole(record.role), input_binding=rebuilt_binding
         )
@@ -448,6 +455,13 @@ class ResearchConfigurationRepository:
             )
             for b in record.research_input_bindings
         )
+        # PID-006A CA-2 (adversarial-audit follow-up): same discipline as
+        # ResearchPartitionPolicyVersionRepository above -- every nested
+        # ResearchInputBinding must independently re-verify its own
+        # fingerprint before the parent-level recompute-and-compare below
+        # ever trusts it as an input.
+        for rebuilt_binding in rebuilt_bindings:
+            verify_research_input_binding_fingerprint(rebuilt_binding)
         recomputed = compute_research_configuration_fingerprint(
             configuration_schema_version=record.configuration_schema_version,
             strategy_semantic_fingerprint=record.strategy_semantic_fingerprint,
