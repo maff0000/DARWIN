@@ -228,6 +228,35 @@ DO $$ BEGIN IF to_regclass('public.mendel_proposals') IS NOT NULL THEN
     GRANT SELECT, INSERT, UPDATE ON TABLE mendel_proposals TO darwin_app;
 END IF; END $$;
 
+-- --- PID-006A Shared Research/Proof Contracts (migration 0012) ---------
+-- All five tables are pure immutable Version records (PID-006A sec15) --
+-- SELECT, INSERT only, exactly like source_strategies/strategy_versions
+-- above. No UPDATE, no DELETE, anywhere: migration 0012's own
+-- `reject_research_contract_mutation()` trigger (applied to all five
+-- tables) is the real backstop against a rewrite even if a future grant
+-- mistake ever added UPDATE/DELETE here -- but the grant itself is the
+-- first, independent line of defence, same discipline as every other
+-- append-only table on this page.
+DO $$ BEGIN IF to_regclass('public.compiled_strategy_plans') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE compiled_strategy_plans TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.parameter_set_versions') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE parameter_set_versions TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.execution_policy_versions') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE execution_policy_versions TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.research_partition_policy_versions') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE research_partition_policy_versions TO darwin_app;
+END IF; END $$;
+
+DO $$ BEGIN IF to_regclass('public.research_configurations') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE research_configurations TO darwin_app;
+END IF; END $$;
+
 -- No sequence grants: every primary key in this schema is an
 -- application-generated UUID (darwin.core.identities.new_id()) or a
 -- plain TEXT natural key (schema_migrations.version) -- there is no
