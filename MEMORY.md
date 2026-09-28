@@ -336,3 +336,17 @@ Authoritative detail:
 - `docs/architecture/AMENDMENT-A005-POST-HMT2-RESEARCH-SEQUENCING.md`
 - `docs/pids/PID-005-ATHENA.md`
 - `docs/pids/PID-006-APOLLO.md`
+
+---
+
+## 13. PID-006A closure — Shared Research/Proof Contracts (2026-09-28)
+
+- Verdict: `GREEN_DARWIN_PID006A_PROOF_CONTRACTS_ACCEPTED`. Merged `main` @ `87e1fe699bbee986db85ede96a239f43ae094570` (PR #18, merge-commit, first parent `56d37a490efef33d853d43c66c72013add4f9ff5`, second parent `50cb839e9c417dc5982622ad456ec97249220e59`).
+- New package `darwin/research_contracts/` — `CanonicalStrategyCompiler`→`ExecutableStrategyPlan`, `ParameterSetVersion`, `ExecutionPolicyVersion`, `ResearchPartitionPolicyVersion`/`ResearchInputBinding`, `ResearchConfiguration`. Immutable, deterministically fingerprinted, shared by future ATHENA and APOLLO — `darwin/specification` has zero dependency on it (one-directional, `ast`-proven). No historical replay/order/fill/position/P&L code exists anywhere in this package.
+- Persistence: migration `0012_research_contracts.sql`, 5 tables, all `UNIQUE(fingerprint)`, immutable (trigger-enforced, `SELECT, INSERT`-only grants). **Source accepted only — not applied to any deployed runtime.**
+- Went through two Architect-authorised adversarial-audit correction rounds before acceptance: a non-recursive composition-capability check (could let a hand-constructed, non-`finalise()` composition smuggle unsupported temporal semantics past capability-blocking) and two configuration-integrity gaps (a `ResearchConfiguration` could bind a partition policy to an undeclared input; a nested `ResearchInputBinding`'s fingerprint was trusted rather than independently re-verified on reconstruction) — all closed and re-audited clean.
+- Known non-blocking test debt (recorded, not reopened for): the persistence test suite doesn't include a raw-SQL nested-JSON-tamper regression test for the fix above, though the underlying code was proven correct against exactly that attack during the final audit.
+- `darwin/apollo`, `darwin/athena`, `ResearchRun`/`research_runs`: untouched by this work.
+- Next: `SPEC-FIX-001` (pre-existing, unrelated `darwin/specification/validation.py` malformed-composition defect) before `PID-006B — XAUUSD Candle Causal Core`.
+
+Authoritative detail: `docs/pids/PID-006-APOLLO.md` §5/§35, PR `maff0000/DARWIN#18`.
