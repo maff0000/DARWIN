@@ -1,7 +1,7 @@
 # DARWIN — Project Memory / Architectural Index
 
 **Status:** Active project authority index  
-**Last updated:** 2026-09-17 (Amendment A-003 DIKE doctrine incorporated; additive to A-001/A-002/A-004R1)
+**Last updated:** 2026-09-28 (Amendment A-005 post-HMT-2 research sequencing incorporated; additive to A-001/A-002/A-003/A-004R1)
 
 This file records durable DARWIN architectural facts that future delivery sessions must load before changing product architecture. It is not a secret store and must never contain credentials or platform-admin secret locations.
 
@@ -314,3 +314,25 @@ Workshop + Specification → PID-005 ATHENA → PID-006 APOLLO → PID-007 Quali
 PID-008 Continuous Factory. This is a sequencing/scope clarification only — the
 programme's first milestone (§1: five independently promising XAUUSD strategies) is
 unchanged.
+
+---
+
+## 12. Post-HMT-2 research restart (Amendment A-005, 2026-09-28)
+
+- Verified DARWIN factual-restart `main`: `a886b1b241d8eb8063db408e5dd146618af630ba` (PR #16, ATHENA + DIKE archaeology, merged).
+- Verified HERMES HMT-2 `main`: `4cece04bbc538828576b82e93fb20818b8f5b429`. HMT-2 selection manifest holds 448 governed GC sessions; DARWIN consumes HERMES read-only and must verify scientific hashes/lineage, never trust a filesystem path as authority on its own.
+- HERMES now provides two distinct governed historical authorities: the existing canonical candle authority (§4-§6, unchanged) and the additional GC HMT-2 event/microstructure corpus. Neither replaces the other.
+- Post-HMT-2 reconciliation verdict: `GREEN_DARWIN_POST_HMT2_RECONCILIATION_ARCHITECTURALLY_ACCEPTED`.
+- Amendment A-005 preserves PID numbering (`PID-005` ATHENA, `PID-006` APOLLO) but changes implementation order: APOLLO core first, ATHENA engine afterward.
+- Permanent architecture: `StrategyVersion -> CanonicalStrategyCompiler -> ExecutableStrategyPlan`. ATHENA and APOLLO share semantic truth only; they never share a replay/simulation engine.
+- First APOLLO implementation slice: a bounded real `XAU_USD` candle causal proof engine. HMT-2 follows in sequence: event-dataset usability -> governed GC research semantics -> GC actual-contract incremental-value experiment.
+- COMEX GC and OTC `XAU_USD` are never interchangeable. First GC research uses actual contract identities; continuous/roll doctrine is deferred until genuinely required.
+- `ExecutionPolicyVersion`, `ParameterSetVersion` and `ResearchPartitionPolicyVersion` are shared immutable DARWIN research identities — never private ATHENA/APOLLO state.
+- Protected holdout is first-class research governance: ATHENA cannot search it; APOLLO access is recorded so repeated holdout use stays visible.
+- DARWIN `main` branch protection was verified disabled at this checkpoint (`gh api .../branches/main/protection` → 404 "Branch not protected"). Separate governance debt; do not bypass a denied GitHub admin action through an alternate mechanism.
+
+Authoritative detail:
+- `docs/architecture/DARWIN-POST-HMT2-RECONCILIATION.md`
+- `docs/architecture/AMENDMENT-A005-POST-HMT2-RESEARCH-SEQUENCING.md`
+- `docs/pids/PID-005-ATHENA.md`
+- `docs/pids/PID-006-APOLLO.md`
