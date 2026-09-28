@@ -14,6 +14,7 @@
 **Amendment A-002 (2026-09-17):** time/instrument unit semantics — see §7a.
 **Amendment A-003 (previously issued; incorporated into this branch 2026-09-17):** DIKE deterministic capital-protection doctrine — see §5.12/§22b.
 **Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §22a. Central-architecture-owned; DARWIN records compatibility only, no cross-system authority.
+**Amendment A-005 (2026-09-28):** post-HMT-2 historical-proof sequencing, APOLLO-before-ATHENA implementation order, shared semantic compiler / independent engines, dual HERMES candle+event authority, and GC/XAUUSD separation — see `docs/architecture/AMENDMENT-A005-POST-HMT2-RESEARCH-SEQUENCING.md`.
 
 ---
 
@@ -1086,6 +1087,22 @@ DIKE policy identity is immutable and versioned, the same discipline DARWIN alre
 - **TRON's hard limits are sovereign; the stricter constraint always wins.** No DARWIN research configuration, however it is proven, may be interpreted as relaxing a TRON-enforced hard limit.
 - **No direct feedback mutation.** Nothing — not NEO, not SOCRATES, not any future automated process — may mutate a DIKE policy directly from a learned hypothesis; every change is a new, immutable, versioned policy that goes through the same research/proof discipline as any other candidate parameter.
 - **Historical evidence is never rewritten.** A later DIKE policy change never alters what an already-recorded `ResearchRun`'s DIKE identity meant at the time it ran.
+
+---
+
+## 22c. Amendment A-005 — post-HMT-2 research sequencing and proof architecture (2026-09-28)
+
+HERMES HMT-2 (GC market-event/microstructure historical authority, 448-session governed corpus) is CLOSED GREEN and has been reconciled against DARWIN's factual state. Full detail: `docs/architecture/DARWIN-POST-HMT2-RECONCILIATION.md` and `docs/architecture/AMENDMENT-A005-POST-HMT2-RESEARCH-SEQUENCING.md`. `PID-005-ATHENA.md` and `PID-006-APOLLO.md` are the resulting Architect module definitions.
+
+This amendment locks the following programme decisions:
+
+- **Historical proof before HMT-LIVE.** HMT-2's research value is proven through DARWIN before HMT-LIVE is reconsidered at all.
+- **PID numbering is unchanged.** `PID-005` remains ATHENA; `PID-006` remains APOLLO. This amendment changes implementation order, not module identity.
+- **APOLLO implementation precedes the ATHENA engine.** ATHENA's optimiser is only useful once APOLLO's independent causal-proof substrate is scientifically trustworthy; ATHENA engine implementation resumes only after APOLLO's shared contracts and XAUUSD causal core are accepted.
+- **Shared semantics, independent engines.** ATHENA and APOLLO consume the same deterministic `StrategyVersion -> CanonicalStrategyCompiler -> ExecutableStrategyPlan` boundary. They must never share a historical simulation/replay engine — legacy architecture where ATHENA drove Apollo's engine directly is a documented anti-pattern and is rejected.
+- **Two valid HERMES historical authorities.** The existing canonical candle authority (§4, §5, §6 of `MEMORY.md`) remains valid and is not superseded. HMT-2 adds a second, distinct GC event/microstructure authority. Neither replaces the other; DARWIN must not collapse them into one untyped dataset.
+- **GC ≠ XAUUSD.** COMEX GC futures and OTC `XAU_USD` are never interchangeable and must never be silently equated. First GC research uses actual contract identities; continuous/roll doctrine is deferred until a strategy genuinely requires it.
+- **Protected holdout is first-class shared research governance.** Development/validation/protected-holdout roles are a shared DARWIN research contract (`ResearchPartitionPolicyVersion`), not private ATHENA or APOLLO state. ATHENA must not search protected APOLLO holdout data; APOLLO holdout access is a recorded evidence event.
 
 ---
 
