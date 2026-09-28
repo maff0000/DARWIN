@@ -23,8 +23,10 @@ Judgment call (flagged for the Architect/auditor -- PID-006A delivery
 discipline item 5): v1 fully, deterministically represents ATOMIC/ALL/ANY
 composition -- every field of `AtomicCondition`/`AllComposition`/
 `AnyComposition` is carried over unchanged, including nested canonical/
-derived fact references, parameters, sessions, expiry, etc. `SEQUENCE`
-and `CONTEXT_TRIGGER` composition roots are capability-blocked
+derived fact references, parameters, sessions, expiry, etc. A `SEQUENCE`
+or `CONTEXT_TRIGGER` node -- anywhere in the composition tree, not only
+at its root (including nested inside an `AllComposition`/
+`AnyComposition`'s `components`) -- is capability-blocked
 (`ENGINE_CAPABILITY_BLOCKED`, reason `UNSUPPORTED_COMPOSITION_PRIMITIVE`),
 NOT because their data cannot be copied into a dict (it trivially can),
 but because `SequenceComposition.ordering_window_seconds`/`tie_semantics`
@@ -48,6 +50,9 @@ from darwin.research_contracts.errors import (
     EngineCapabilityBlockedError,
 )
 from darwin.specification.composition import (
+    AllComposition,
+    AnyComposition,
+    AtomicCondition,
     ContextTriggerComposition,
     SequenceComposition,
 )
@@ -151,24 +156,72 @@ def compute_plan_fingerprint(
     )
 
 
-def _check_composition_capability(strategy_version: StrategyVersion) -> None:
-    """Fail closed on the one deliberate v1 capability gap (module
-    docstring). Raised before any payload is built -- a capability-blocked
-    StrategyVersion never produces a partial/best-effort plan."""
-    composition = strategy_version.composition
-    if isinstance(composition, (SequenceComposition, ContextTriggerComposition)):
+def _walk_composition_capability(node: object, *, root_id: str) -> None:
+    """Recursively walk every composition node reachable from `node` --
+    not just the root -- and fail closed the instant any node ANYWHERE in
+    the tree is a SEQUENCE/CONTEXT_TRIGGER primitive, or any node type
+    this compiler does not explicitly recognise (PID-006A sec4/sec13).
+
+    This exists because `AllComposition`/`AnyComposition.components` is
+    typed as `tuple[AtomicCondition, ...]` but that is a type HINT, not a
+    runtime guarantee -- nothing in `darwin.specification.composition`
+    enforces it at construction time (`AllComposition.__post_init__` only
+    checks `len(components) >= 2`). A component slot can be populated
+    with any object, including a composition primitive this compiler does
+    not support (e.g. a `SequenceComposition` smuggled inside an
+    `AllComposition`'s `components` tuple, bypassing `finalise()`).
+    Checking only `strategy_version.composition`'s own top-level type --
+    as an earlier version of this function did -- silently carried such a
+    smuggled node through as inert `canonicalize()`d data instead of
+    capability-blocking it, which is exactly the "semantic field silently
+    dropped" failure PID-006A sec4 forbids (found by independent adversarial
+    review; see PR #18 follow-up commit).
+    """
+    if isinstance(node, (SequenceComposition, ContextTriggerComposition)):
         raise EngineCapabilityBlockedError(
             f"CanonicalStrategyCompiler {COMPILER_VERSION} cannot yet compile "
-            f"composition primitive {composition.primitive.value} "
-            f"(composition_id={composition.composition_id!r}) -- SEQUENCE/CONTEXT_TRIGGER "
-            f"temporal-ordering semantics are not yet representable in ExecutableStrategyPlan "
+            f"composition primitive {node.primitive.value} "
+            f"(composition_id={node.composition_id!r}, found while walking the composition "
+            f"tree rooted at {root_id!r}) -- SEQUENCE/CONTEXT_TRIGGER temporal-ordering "
+            f"semantics are not yet representable in ExecutableStrategyPlan "
             f"(PID-006A sec13/sec2 judgment call)",
             context=CapabilityBlockContext(
                 reason=CapabilityBlockReason.UNSUPPORTED_COMPOSITION_PRIMITIVE,
-                subject_ref=composition.composition_id,
-                detail=(("primitive", composition.primitive.value),),
+                subject_ref=node.composition_id,
+                detail=(("primitive", node.primitive.value), ("root_composition_id", root_id)),
             ),
         )
+    if isinstance(node, AtomicCondition):
+        return  # leaf -- nothing further to walk for composition-primitive capability purposes
+    if isinstance(node, (AllComposition, AnyComposition)):
+        for component in node.components:
+            _walk_composition_capability(component, root_id=root_id)
+        return
+    # Any other node type is one this compiler does not explicitly
+    # recognise at all -- fail closed rather than silently canonicalize()
+    # it as inert data (PID-006A sec13: no third state where a semantic
+    # field is silently dropped).
+    raise EngineCapabilityBlockedError(
+        f"CanonicalStrategyCompiler {COMPILER_VERSION} encountered an unrecognised "
+        f"composition node type {type(node).__name__!r} while walking the composition tree "
+        f"rooted at {root_id!r} -- refusing to silently carry it over as inert data",
+        context=CapabilityBlockContext(
+            reason=CapabilityBlockReason.UNSUPPORTED_COMPOSITION_PRIMITIVE,
+            subject_ref=getattr(node, "composition_id", getattr(node, "condition_id", root_id)),
+            detail=(("node_type", type(node).__name__), ("root_composition_id", root_id)),
+        ),
+    )
+
+
+def _check_composition_capability(strategy_version: StrategyVersion) -> None:
+    """Fail closed on the one deliberate v1 capability gap (module
+    docstring), across the ENTIRE composition tree -- not just its root
+    (see `_walk_composition_capability`). Raised before any payload is
+    built -- a capability-blocked StrategyVersion never produces a
+    partial/best-effort plan."""
+    composition = strategy_version.composition
+    root_id = getattr(composition, "composition_id", getattr(composition, "condition_id", "<root>"))
+    _walk_composition_capability(composition, root_id=root_id)
 
 
 class CanonicalStrategyCompiler:

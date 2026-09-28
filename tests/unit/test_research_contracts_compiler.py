@@ -19,6 +19,8 @@ from darwin.specification.applicability import (
     IntrabarAmbiguityPolicy,
 )
 from darwin.specification.composition import (
+    AllComposition,
+    AnyComposition,
     ContextTriggerComposition,
     ExpiryMode,
     ExpirySpec,
@@ -271,3 +273,100 @@ def test_plan_is_not_a_backtest() -> None:
     for f in dataclasses.fields(ExecutableStrategyPlan):
         lowered = f.name.lower()
         assert not any(token in lowered for token in forbidden_substrings), f.name
+
+
+def _all_composition(
+    threshold_a: str = "4000", threshold_b: str = "4100", composition_id: str = "all-1"
+) -> AllComposition:
+    return AllComposition(
+        composition_id=composition_id,
+        components=(
+            simple_atomic_condition("leg_a", threshold=threshold_a),
+            simple_atomic_condition("leg_b", threshold=threshold_b),
+        ),
+    )
+
+
+def _any_composition(
+    threshold_a: str = "4000", threshold_b: str = "4100", composition_id: str = "any-1"
+) -> AnyComposition:
+    return AnyComposition(
+        composition_id=composition_id,
+        components=(
+            simple_atomic_condition("leg_a", threshold=threshold_a),
+            simple_atomic_condition("leg_b", threshold=threshold_b),
+        ),
+    )
+
+
+@pytest.mark.parametrize("build", [_all_composition, _any_composition], ids=["ALL", "ANY"])
+def test_all_and_any_composition_compile_deterministically(build) -> None:
+    """Adversarial-audit follow-up (Finding 2): ALL/ANY composition was
+    already correctly supported by the compiler but had zero test
+    coverage. Two independently-built compositions with identical content
+    must compile to an identical fingerprint."""
+    base = _finalised(strategy_version_id="sv-all-any-a")
+    version_a = _recomputed(dataclasses.replace(base, composition=build()))
+    version_b = _recomputed(dataclasses.replace(base, composition=build()))
+
+    compiler = CanonicalStrategyCompiler()
+    plan_a = compiler.compile(version_a)
+    plan_b = compiler.compile(version_b)
+    assert plan_a.fingerprint == plan_b.fingerprint
+
+
+@pytest.mark.parametrize("build", [_all_composition, _any_composition], ids=["ALL", "ANY"])
+def test_all_and_any_composition_material_change_changes_fingerprint(build) -> None:
+    """Adversarial-audit follow-up (Finding 2): a materially different
+    ALL/ANY composition must compile to a genuinely different
+    fingerprint -- proving components really are represented, not
+    collapsed/ignored."""
+    base = _finalised(strategy_version_id="sv-all-any-b")
+    version = _recomputed(dataclasses.replace(base, composition=build()))
+    changed = _recomputed(dataclasses.replace(base, composition=build(threshold_b="4900")))
+
+    compiler = CanonicalStrategyCompiler()
+    plan = compiler.compile(version)
+    changed_plan = compiler.compile(changed)
+    assert plan.fingerprint != changed_plan.fingerprint
+
+
+@pytest.mark.parametrize("container", [AllComposition, AnyComposition], ids=["ALL", "ANY"])
+def test_nested_sequence_smuggled_inside_all_or_any_is_capability_blocked(container) -> None:
+    """Adversarial-audit Finding 1: a SEQUENCE (or, symmetrically,
+    CONTEXT_TRIGGER) node smuggled one level down inside an
+    AllComposition/AnyComposition's own `components` tuple -- bypassing
+    `finalise()`, which this compiler never re-runs -- must be
+    capability-blocked exactly like a root-level SEQUENCE/CONTEXT_TRIGGER,
+    never silently carried over as inert `canonicalize()`d data just
+    because the smuggling happened one level down.
+    `AllComposition`/`AnyComposition.__post_init__` only checks component
+    COUNT, never component TYPE, so this is constructible directly via
+    the dataclass -- exactly how the independent auditor found this gap.
+    This test fails against the pre-fix root-only capability check (no
+    exception is raised there) and passes against the recursive walk.
+    """
+    base = _finalised(strategy_version_id="sv-nested-seq")
+    nested_sequence = SequenceComposition(
+        composition_id="nested-seq",
+        components=(
+            SequenceComponent(sequence_index=0, component=simple_atomic_condition("seq_leg_0")),
+            SequenceComponent(
+                sequence_index=1, component=simple_atomic_condition("seq_leg_1", threshold="4200")
+            ),
+        ),
+        ordering_window_seconds=1800,
+        tie_semantics=SequenceTieSemantics.TIES_PERMITTED,
+    )
+    smuggling_composition = container(
+        composition_id="outer-smuggle",
+        components=(simple_atomic_condition("legit_leg"), nested_sequence),
+    )
+    version = _recomputed(dataclasses.replace(base, composition=smuggling_composition))
+
+    compiler = CanonicalStrategyCompiler()
+    with pytest.raises(EngineCapabilityBlockedError) as exc_info:
+        compiler.compile(version)
+    assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_COMPOSITION_PRIMITIVE
+    assert exc_info.value.context.subject_ref == "nested-seq"
+
