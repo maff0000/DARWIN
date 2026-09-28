@@ -101,7 +101,15 @@ def test_0011_upgrade_path_applies_cleanly_and_preserves_existing_workshop_data(
         )
 
     applied_now = run_migrations(fresh_database, MIGRATIONS_DIR)
-    assert applied_now == ["0011_mendel_workshop_assistant"]
+    # PID-006A note: MIGRATIONS_DIR is the repo's CURRENT full migrations
+    # directory, not a snapshot frozen at 0011 -- this assertion is
+    # necessarily coupled to whatever the latest migration is, not just
+    # 0011. Updated here (additively, same discipline as every other
+    # PID-006A change) to expect 0012_research_contracts to apply
+    # immediately after 0011 in the same run, rather than hardcoding "no
+    # migration will ever be added after 0011", which was never a real
+    # invariant this test was proving.
+    assert applied_now == ["0011_mendel_workshop_assistant", "0012_research_contracts"]
     state = migration_state(fresh_database, MIGRATIONS_DIR)
     assert state["up_to_date"] is True
 
