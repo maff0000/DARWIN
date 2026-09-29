@@ -15,6 +15,7 @@
 **Amendment A-003 (previously issued; incorporated into this branch 2026-09-17):** DIKE deterministic capital-protection doctrine — see §5.12/§22b.
 **Amendment A-004R1 (2026-09-17):** federated execution / SOCRATES compatibility — see §22a. Central-architecture-owned; DARWIN records compatibility only, no cross-system authority.
 **Amendment A-005 (2026-09-28):** post-HMT-2 historical-proof sequencing, APOLLO-before-ATHENA implementation order, shared semantic compiler / independent engines, dual HERMES candle+event authority, and GC/XAUUSD separation — see `docs/architecture/AMENDMENT-A005-POST-HMT2-RESEARCH-SEQUENCING.md`.
+**Amendment A-006 (2026-09-29):** Market Truth Profiles and instrument-specific research capabilities — platform genericity is mandatory, edge portability is not; strategy applicability may depend on instrument-specific governed market-truth capabilities in addition to ordinary instrument identity — see `docs/architecture/AMENDMENT-A006-MARKET-TRUTH-PROFILES.md`.
 
 ---
 
@@ -22,7 +23,9 @@
 
 DARWIN is a continuously operating, multi-instrument research appliance that discovers, normalises, optimises, independently proves and qualifies trading strategies for any canonical instrument made available through the governed HERMES historical contract.
 
-DARWIN's product capability is multi-instrument. Its first programme milestone (§2) is intentionally XAUUSD-focused — XAUUSD is the first proving market, not a boundary on what DARWIN itself can do. DARWIN must never redesign its core data model, research identity, persistence or ARENA surfaces to add a new instrument; it must only need a canonical instrument identifier already present in HERMES's governed historical contract (§6, §7).
+DARWIN's product capability is multi-instrument. Its first programme milestone (§2) is intentionally XAUUSD-focused — XAUUSD is the first proving market, not a boundary on what DARWIN itself can do. DARWIN must never redesign its core research/proof architecture, data model, research identity, persistence or ARENA surfaces to onboard a new instrument; the platform itself needs only a canonical instrument identifier already present in HERMES's governed historical contract (§6, §7).
+
+That platform-level genericity is distinct from strategy-level applicability (Amendment A-006, §22d). Onboarding a new instrument does not imply every strategy requires only a canonical instrument identifier to be applicable to it — a strategy or research configuration may additionally require explicit, governed market-truth capabilities (e.g. native tick/bid-ask evidence, venue microstructure, cross-market context) that are only available for some instruments' Market Truth Profiles. Platform genericity is mandatory; edge portability across instruments is not.
 
 Its purpose is to turn an uncontrolled universe of external/internal strategy ideas into a governed pipeline of reproducible candidate evidence.
 
@@ -1103,6 +1106,22 @@ This amendment locks the following programme decisions:
 - **Two valid HERMES historical authorities.** The existing canonical candle authority (§4, §5, §6 of `MEMORY.md`) remains valid and is not superseded. HMT-2 adds a second, distinct GC event/microstructure authority. Neither replaces the other; DARWIN must not collapse them into one untyped dataset.
 - **GC ≠ XAUUSD.** COMEX GC futures and OTC `XAU_USD` are never interchangeable and must never be silently equated. First GC research uses actual contract identities; continuous/roll doctrine is deferred until a strategy genuinely requires it.
 - **Protected holdout is first-class shared research governance.** Development/validation/protected-holdout roles are a shared DARWIN research contract (`ResearchPartitionPolicyVersion`), not private ATHENA or APOLLO state. ATHENA must not search protected APOLLO holdout data; APOLLO holdout access is a recorded evidence event.
+
+---
+
+## 22d. Amendment A-006 — Market Truth Profiles and instrument-specific research capabilities (2026-09-29)
+
+DARWIN remains one instrument-generic research/proof platform. Full detail: `docs/architecture/AMENDMENT-A006-MARKET-TRUTH-PROFILES.md`.
+
+This amendment locks the following programme decisions:
+
+- **One platform, market-specific truth.** DARWIN will not create a separate research system merely because an instrument lacks GC-style information, will not make COMEX GC/HMT-2 a universal DARWIN dependency, and will not weaken the GOLD research stack merely to make every edge portable. Instrument-specific research capability is governed through a **Market Truth Profile** concept (or exact semantic equivalent) — an architectural concept, not an implementation package; no `MarketTruthProfile` class is authorised until a concrete consumer contract requires one.
+- **Strategy applicability is capability-aware.** A strategy or research configuration may require market-truth capabilities (e.g. native tick/bid-ask replay, central-limit-order-book context, event-level sequencing) in addition to ordinary instrument applicability. If a required capability is unavailable for the selected Market Truth Profile, the correct outcome is fail-closed/not-applicable — never a fabricated equivalent, a silently substituted weaker data source, or an undocumented degrade to candles.
+- **Three distinct truth relationships.** Native-market truth (belongs directly to the traded/researched instrument), cross-market contextual truth (from a related market, used as explanatory evidence, never silently promoted into execution truth), and venue-specific microstructure truth (centralised event/order-book evidence belonging to an actual venue/contract — HMT-2 GC MBP-1 belongs here) remain explicit and distinct, and may coexist in one research configuration without their identities/roles blurring.
+- **GC ≠ XAUUSD, reaffirmed.** COMEX GC futures and OTC `XAU_USD` remain distinct market and execution identities (Amendment A-005). GC event truth is never XAUUSD execution truth; GC prices/fills may never be substituted for XAUUSD prices/fills; any GC→XAUUSD contextual use must be explicitly declared as cross-market context, never silently promoted.
+- **Edge portability is not a success criterion.** DARWIN itself remains reusable across instruments; a profitable/robust strategy family does not have to be. A strategy whose edge materially depends on GC microstructure may legitimately remain GOLD/XAUUSD-specialist only — platform genericity is mandatory, edge portability is not.
+- **No second DARWIN.** Market-specific data adapters and capability implementations are permitted behind governed contracts; a second DARWIN architecture is not.
+- **Evidence before live infrastructure, reaffirmed.** HMT-LIVE remains deferred until historical evidence demonstrates material value; negative evidence is a valid, acceptable result.
 
 ---
 
