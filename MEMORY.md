@@ -382,3 +382,13 @@ Authoritative detail: `docs/architecture/AMENDMENT-A006-MARKET-TRUTH-PROFILES.md
 - Do not create a second competing strategy model or a new DSL merely because A-007 exists. `StrategyVersion` remains the immutable semantic authority. Documentation only — no JSON Schema, serializer, migration or new strategy class authorised by A-007 itself; implementation is deferred until a concrete consumer requires it, and must wrap the existing Specification domain.
 
 Authoritative detail: `docs/architecture/AMENDMENT-A007-CANONICAL-STRATEGY-DEFINITION.md`.
+
+---
+
+## 16. SPEC-FIX-001 closure + A-006/A-007 durable lock (2026-09-29)
+
+- `SPEC-FIX-001 = CLOSED GREEN` (`GREEN_DARWIN_SPEC_FIX_001_FAIL_CLOSED_ACCEPTED`). Merged `main` via PR #20 at `35100934356abae1c580a77b4dd9440ad9fb808a` (first parent `b0ff8b0e24d5c6a669403117f4f1cb33c6b094c3`, second parent `bdba1eeada600bb9230cb98fbec0f497367c9396`). `darwin/specification/composition.py`'s five composition constructors now fail closed (`InvalidCompositionError`) on malformed nested state instead of leaking a bare `AttributeError`; `all_leaf_conditions()` carries an independent defence-in-depth check. The PID-006A adversarial compiler test was adapted (not retired) per Architect ruling to use `object.__setattr__` invariant-bypass instead of direct construction, preserving its original proof that `CanonicalStrategyCompiler` independently fails closed too.
+- `A-006 = DURABLY LOCKED` (`GREEN_DARWIN_A006_MARKET_TRUTH_PROFILE_DOC_ACCEPTED`). Merged via PR #21 at `a9267b2d4013129784f388c75001a7047d5da595` (first parent `35100934356abae1c580a77b4dd9440ad9fb808a`, second parent `f6c5c45fc528caf25db6570affe9135d5001a83f`).
+- `A-007 = DURABLY LOCKED` (`GREEN_DARWIN_A007_CANONICAL_STRATEGY_DOC_ACCEPTED`). Merged via PR #22 at `0936d07fb18215c701ed6d8123a1320b3c796d5d` (first parent `a9267b2d4013129784f388c75001a7047d5da595`, second parent `0b8ecdcca660b57db61496ffbf5630a1bd467c89`).
+- Final reconciled `main`: `0936d07fb18215c701ed6d8123a1320b3c796d5d`.
+- Next gate: `PID-006B — XAUUSD Candle Causal Core`.
