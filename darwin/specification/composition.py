@@ -166,6 +166,21 @@ class AllComposition:
     def __post_init__(self) -> None:
         if len(self.components) < 2:
             raise InvalidCompositionError("ALL requires at least two components")
+        # SPEC-FIX-001: the `tuple[AtomicCondition, ...]` type hint above is
+        # not a runtime guarantee -- nothing stops a caller (e.g. via
+        # `dataclasses.replace()`) from substituting a different
+        # composition type into `components`. This contract phase forbids
+        # nesting (see module docstring); a non-AtomicCondition member must
+        # fail closed here, at construction, rather than surface later as a
+        # bare AttributeError/TypeError wherever a leaf's AtomicCondition-
+        # only attributes (e.g. `.expression`) are first dereferenced.
+        for component in self.components:
+            if not isinstance(component, AtomicCondition):
+                raise InvalidCompositionError(
+                    f"AllComposition {self.composition_id!r} components must all be "
+                    f"AtomicCondition leaves (nesting is not supported in this contract "
+                    f"phase), got {component!r} (type {type(component)!r})"
+                )
         if self.primitive != CompositionPrimitive.ALL:
             raise InvalidCompositionError("AllComposition.primitive is fixed to ALL")
 
@@ -184,6 +199,17 @@ class AnyComposition:
     def __post_init__(self) -> None:
         if len(self.components) < 2:
             raise InvalidCompositionError("ANY requires at least two components")
+        # SPEC-FIX-001: same rationale as AllComposition above -- the type
+        # hint alone does not stop a malformed element (e.g. a nested
+        # composition) from being substituted in; fail closed here rather
+        # than let it surface later as a bare AttributeError/TypeError.
+        for component in self.components:
+            if not isinstance(component, AtomicCondition):
+                raise InvalidCompositionError(
+                    f"AnyComposition {self.composition_id!r} components must all be "
+                    f"AtomicCondition leaves (nesting is not supported in this contract "
+                    f"phase), got {component!r} (type {type(component)!r})"
+                )
         if self.primitive != CompositionPrimitive.ANY:
             raise InvalidCompositionError("AnyComposition.primitive is fixed to ANY")
 
@@ -208,6 +234,15 @@ class SequenceComponent:
     component: AtomicCondition
 
     def __post_init__(self) -> None:
+        # SPEC-FIX-001: `component: AtomicCondition` is a type hint, not a
+        # runtime guarantee -- fail closed rather than let a malformed
+        # `.component` surface as a bare attribute error downstream.
+        if not isinstance(self.component, AtomicCondition):
+            raise InvalidCompositionError(
+                f"SequenceComponent (sequence_index={self.sequence_index!r}).component must be "
+                f"an AtomicCondition leaf (nesting is not supported in this contract phase), "
+                f"got {self.component!r} (type {type(self.component)!r})"
+            )
         if self.sequence_index < 0:
             raise InvalidCompositionError("sequence_index must be >= 0")
 
@@ -237,6 +272,18 @@ class SequenceComposition:
             raise InvalidCompositionError("SequenceComposition.primitive is fixed to SEQUENCE")
         if len(self.components) < 2:
             raise InvalidCompositionError("SEQUENCE requires at least two components")
+        # SPEC-FIX-001: this type check MUST run before the `c.sequence_index`
+        # access immediately below -- a non-SequenceComponent element (e.g.
+        # a nested composition substituted in via `dataclasses.replace()`)
+        # would otherwise crash there with a bare AttributeError before this
+        # method ever gets a chance to raise the governed
+        # InvalidCompositionError.
+        for component in self.components:
+            if not isinstance(component, SequenceComponent):
+                raise InvalidCompositionError(
+                    f"SequenceComposition {self.composition_id!r} components must all be "
+                    f"SequenceComponent instances, got {component!r} (type {type(component)!r})"
+                )
         indices = sorted(c.sequence_index for c in self.components)
         if indices != list(range(len(indices))):
             raise InvalidCompositionError(
@@ -340,6 +387,25 @@ class ContextTriggerComposition:
     def __post_init__(self) -> None:
         if self.primitive != CompositionPrimitive.CONTEXT_TRIGGER:
             raise InvalidCompositionError("ContextTriggerComposition.primitive is fixed to CONTEXT_TRIGGER")
+        # SPEC-FIX-001: these type checks MUST run before the
+        # `self.context.timeframe`/`self.trigger.timeframe` access
+        # immediately below -- a malformed `context`/`trigger` (e.g. a
+        # nested composition substituted in via `dataclasses.replace()`)
+        # would otherwise crash there with a bare AttributeError before
+        # this method ever gets a chance to raise the governed
+        # InvalidCompositionError.
+        if not isinstance(self.context, AtomicCondition):
+            raise InvalidCompositionError(
+                f"ContextTriggerComposition {self.composition_id!r}.context must be an "
+                f"AtomicCondition leaf (nesting is not supported in this contract phase), "
+                f"got {self.context!r} (type {type(self.context)!r})"
+            )
+        if not isinstance(self.trigger, AtomicCondition):
+            raise InvalidCompositionError(
+                f"ContextTriggerComposition {self.composition_id!r}.trigger must be an "
+                f"AtomicCondition leaf (nesting is not supported in this contract phase), "
+                f"got {self.trigger!r} (type {type(self.trigger)!r})"
+            )
         if self.context.timeframe.is_finer_than(self.trigger.timeframe):
             raise InvalidCompositionError(
                 f"CONTEXT_TRIGGER timeframe-coherence violation: context timeframe "
@@ -360,16 +426,54 @@ CompositionRoot = AtomicCondition | AllComposition | AnyComposition | SequenceCo
 def all_leaf_conditions(root: CompositionRoot) -> tuple[AtomicCondition, ...]:
     """Every AtomicCondition leaf reachable from `root`. Since this
     contract phase forbids nesting compositions inside one another, this
-    is a one-level unwrap, not a recursive tree walk."""
+    is a one-level unwrap, not a recursive tree walk.
+
+    SPEC-FIX-001 defence-in-depth: every `__post_init__` above already
+    rejects a malformed leaf at construction time. This function re-checks
+    anyway, structurally, before returning -- because `__post_init__` only
+    runs once, at construction, and a frozen dataclass's field can still be
+    mutated afterwards via `object.__setattr__` (never via
+    `dataclasses.replace()`, which DOES re-invoke `__post_init__` on the
+    new instance and is therefore already caught above). If malformed
+    state ever reaches this function despite the constructor checks, it
+    must fail closed here rather than hand a non-AtomicCondition leaf to a
+    caller that will blindly dereference AtomicCondition-only attributes
+    (e.g. `.expression`) on it.
+    """
     if isinstance(root, AtomicCondition):
-        return (root,)
-    if isinstance(root, (AllComposition, AnyComposition)):
-        return root.components
-    if isinstance(root, SequenceComposition):
-        return root.ordered_components()
-    if isinstance(root, ContextTriggerComposition):
-        return (root.context, root.trigger)
-    raise InvalidCompositionError(f"Unrecognised composition root type: {type(root)!r}")
+        leaves: tuple[AtomicCondition, ...] = (root,)
+    elif isinstance(root, (AllComposition, AnyComposition)):
+        leaves = root.components
+    elif isinstance(root, SequenceComposition):
+        # `ordered_components()` itself dereferences `c.sequence_index` for
+        # every `c` in `root.components` -- guard that here too, so an
+        # `object.__setattr__`-corrupted `components` tuple fails closed
+        # with InvalidCompositionError rather than a bare AttributeError
+        # inside `ordered_components()` before this function's own
+        # leaf-type assertion below ever runs.
+        for component in root.components:
+            if not isinstance(component, SequenceComponent):
+                raise InvalidCompositionError(
+                    f"all_leaf_conditions() found a non-SequenceComponent element "
+                    f"{component!r} (type {type(component)!r}) in SequenceComposition "
+                    f"{root.composition_id!r}.components -- malformed composition state "
+                    f"reached the leaf-extraction boundary despite constructor checks"
+                )
+        leaves = root.ordered_components()
+    elif isinstance(root, ContextTriggerComposition):
+        leaves = (root.context, root.trigger)
+    else:
+        raise InvalidCompositionError(f"Unrecognised composition root type: {type(root)!r}")
+
+    for leaf in leaves:
+        if not isinstance(leaf, AtomicCondition):
+            raise InvalidCompositionError(
+                f"all_leaf_conditions() resolved a non-AtomicCondition leaf {leaf!r} "
+                f"(type {type(leaf)!r}) from root {root!r} -- malformed composition state "
+                f"reached the leaf-extraction boundary despite constructor checks (e.g. via "
+                f"object.__setattr__ on an already-constructed frozen dataclass)"
+            )
+    return tuple(leaves)
 
 
 # --- normalized state semantics (PID-004 sec7) ------------------------------

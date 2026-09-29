@@ -29,6 +29,7 @@ from darwin.specification.composition import (
     SequenceTieSemantics,
 )
 from darwin.specification.domain import SEMANTIC_FIELD_NAMES, StrategyVersion
+from darwin.specification.errors import InvalidCompositionError
 from darwin.specification.fingerprint import canonical_hash
 from darwin.specification.parameters import (
     IntegerRangeDomain,
@@ -340,11 +341,27 @@ def test_nested_sequence_smuggled_inside_all_or_any_is_capability_blocked(contai
     capability-blocked exactly like a root-level SEQUENCE/CONTEXT_TRIGGER,
     never silently carried over as inert `canonicalize()`d data just
     because the smuggling happened one level down.
-    `AllComposition`/`AnyComposition.__post_init__` only checks component
-    COUNT, never component TYPE, so this is constructible directly via
-    the dataclass -- exactly how the independent auditor found this gap.
-    This test fails against the pre-fix root-only capability check (no
-    exception is raised there) and passes against the recursive walk.
+
+    SPEC-FIX-001 update: Specification now rejects this malformed shape at
+    construction time (`AllComposition`/`AnyComposition.__post_init__` now
+    isinstance-check every component against AtomicCondition -- see
+    `darwin.specification.composition` and
+    `tests/unit/test_specification_composition.py`), so the smuggled
+    composition below can no longer be built via the dataclass
+    constructor directly (that companion fact is proven separately by
+    `test_nested_sequence_via_direct_construction_is_rejected_by_specification`
+    below). This test deliberately bypasses that invariant, via
+    `object.__setattr__` on an already-validly-constructed container --
+    never via the constructor, and never a technique production code
+    uses -- to preserve independent proof that `CanonicalStrategyCompiler`
+    itself still fails closed if malformed/corrupted composition state
+    ever reaches it despite Specification's own defences (persistence
+    corruption, deserialisation defects, migration defects, a future
+    bypassed constructor, test/research tooling constructing objects
+    directly, etc.). The two layers are complementary defence-in-depth,
+    not redundant -- the compiler must not assume malformed state is
+    impossible merely because an upstream constructor currently prevents
+    it.
     """
     base = _finalised(strategy_version_id="sv-nested-seq")
     nested_sequence = SequenceComposition(
@@ -358,10 +375,20 @@ def test_nested_sequence_smuggled_inside_all_or_any_is_capability_blocked(contai
         ordering_window_seconds=1800,
         tie_semantics=SequenceTieSemantics.TIES_PERMITTED,
     )
+    # Genuinely valid at construction time -- both components are real
+    # AtomicCondition leaves, so __post_init__ passes cleanly.
     smuggling_composition = container(
         composition_id="outer-smuggle",
-        components=(simple_atomic_condition("legit_leg"), nested_sequence),
+        components=(simple_atomic_condition("legit_leg"), simple_atomic_condition("legit_leg_2")),
     )
+    # Adversarial corruption ONLY: bypasses __post_init__ entirely to
+    # simulate invariant-bypassed/corrupted state reaching the compiler
+    # (e.g. persistence/deserialisation/migration defects) -- never a
+    # technique real production code may use.
+    object.__setattr__(
+        smuggling_composition, "components", (smuggling_composition.components[0], nested_sequence)
+    )
+
     version = _recomputed(dataclasses.replace(base, composition=smuggling_composition))
 
     compiler = CanonicalStrategyCompiler()
@@ -369,4 +396,32 @@ def test_nested_sequence_smuggled_inside_all_or_any_is_capability_blocked(contai
         compiler.compile(version)
     assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_COMPOSITION_PRIMITIVE
     assert exc_info.value.context.subject_ref == "nested-seq"
+
+
+@pytest.mark.parametrize("container", [AllComposition, AnyComposition], ids=["ALL", "ANY"])
+def test_nested_sequence_via_direct_construction_is_rejected_by_specification(container) -> None:
+    """Companion proof to the adversarial test above: the ORIGINAL
+    direct-construction route (no object.__setattr__ bypass -- just
+    calling `AllComposition(...)`/`AnyComposition(...)` directly with the
+    nested SequenceComposition already in `components`) is now closed at
+    the Specification layer under SPEC-FIX-001. This proves the normal
+    construction path is genuinely closed, as a companion fact to the
+    adapted test above proving the bypass path is still independently
+    caught by the compiler."""
+    nested_sequence = SequenceComposition(
+        composition_id="nested-seq",
+        components=(
+            SequenceComponent(sequence_index=0, component=simple_atomic_condition("seq_leg_0")),
+            SequenceComponent(
+                sequence_index=1, component=simple_atomic_condition("seq_leg_1", threshold="4200")
+            ),
+        ),
+        ordering_window_seconds=1800,
+        tie_semantics=SequenceTieSemantics.TIES_PERMITTED,
+    )
+    with pytest.raises(InvalidCompositionError):
+        container(
+            composition_id="outer-smuggle",
+            components=(simple_atomic_condition("legit_leg"), nested_sequence),
+        )
 
