@@ -1,7 +1,7 @@
 # DARWIN — Project Memory / Architectural Index
 
 **Status:** Active project authority index  
-**Last updated:** 2026-09-29 (Amendment A-006 Market Truth Profiles incorporated; additive to A-001/A-002/A-003/A-004R1/A-005)
+**Last updated:** 2026-09-29 (Amendment A-007 canonical strategy definition incorporated; additive to A-001/A-002/A-003/A-004R1/A-005/A-006)
 
 This file records durable DARWIN architectural facts that future delivery sessions must load before changing product architecture. It is not a secret store and must never contain credentials or platform-admin secret locations.
 
@@ -366,3 +366,19 @@ Authoritative detail: `docs/pids/PID-006-APOLLO.md` §5/§35, PR `maff0000/DARWI
 - Documentation only — no implementation, migration, or new class/package authorised by A-006 itself.
 
 Authoritative detail: `docs/architecture/AMENDMENT-A006-MARKET-TRUTH-PROFILES.md`.
+
+---
+
+## 15. Amendment A-007 — canonical strategy definition & serialization doctrine (2026-09-29)
+
+- Locked doctrine: `GREEN_DARWIN_A007_CANONICAL_STRATEGY_CONTRACT_DOCTRINE_LOCKED`. Every DARWIN strategy has one canonical, versioned, machine-readable representation before it may enter research, proof, qualification or promotion.
+- Required route: `human/AI/external idea → canonical strategy JSON → schema validation → typed Specification model → finalise() → immutable StrategyVersion → CanonicalStrategyCompiler → ExecutableStrategyPlan`. No strategy may bypass this route.
+- JSON is the standard durable interchange/serialization format — it is never the semantic authority. The semantic authority remains DARWIN's governed typed Specification model and immutable `StrategyVersion`.
+- Structural (schema) validation and semantic (Specification) validation are separate gates: `JSON structurally valid ≠ Strategy semantically valid`.
+- Human-readable thesis/rationale/provenance is permitted but is never executable meaning; ambiguous prose must produce a governed refusal, never runtime interpretation.
+- Deterministic canonicalisation is required for fingerprints — JSON formatting/property order must never affect semantic identity. Unknown/unsupported semantic fields fail closed.
+- AI may propose/generate strategy JSON but may never bypass Specification validation; no LLM interpretation is permitted inside APOLLO's or ATHENA's causal execution path. ATHENA/APOLLO consume governed typed/compiled strategy identity only, never arbitrary JSON.
+- A-006 integration (§14): required market capabilities are explicit strategy semantics (`required_market_capabilities`), never hidden agent memory or a human note. Invariant: `strategy requirements → MarketTruthProfile capabilities → compatible/not compatible`.
+- Do not create a second competing strategy model or a new DSL merely because A-007 exists. `StrategyVersion` remains the immutable semantic authority. Documentation only — no JSON Schema, serializer, migration or new strategy class authorised by A-007 itself; implementation is deferred until a concrete consumer requires it, and must wrap the existing Specification domain.
+
+Authoritative detail: `docs/architecture/AMENDMENT-A007-CANONICAL-STRATEGY-DEFINITION.md`.
