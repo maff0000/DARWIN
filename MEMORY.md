@@ -1,7 +1,7 @@
 # DARWIN — Project Memory / Architectural Index
 
 **Status:** Active project authority index  
-**Last updated:** 2026-09-28 (Amendment A-005 post-HMT-2 research sequencing incorporated; additive to A-001/A-002/A-003/A-004R1)
+**Last updated:** 2026-09-29 (Amendment A-006 Market Truth Profiles incorporated; additive to A-001/A-002/A-003/A-004R1/A-005)
 
 This file records durable DARWIN architectural facts that future delivery sessions must load before changing product architecture. It is not a secret store and must never contain credentials or platform-admin secret locations.
 
@@ -350,3 +350,19 @@ Authoritative detail:
 - Next: `SPEC-FIX-001` (pre-existing, unrelated `darwin/specification/validation.py` malformed-composition defect) before `PID-006B — XAUUSD Candle Causal Core`.
 
 Authoritative detail: `docs/pids/PID-006-APOLLO.md` §5/§35, PR `maff0000/DARWIN#18`.
+
+---
+
+## 14. Amendment A-006 — Market Truth Profiles and instrument-specific research capabilities (2026-09-29)
+
+- Locked doctrine: `GREEN_DARWIN_A006_MARKET_TRUTH_PROFILE_DOCTRINE_LOCKED`. DARWIN remains one instrument-generic research/proof platform; GC/HMT-2 is not, and must never become, a universal DARWIN dependency.
+- Instrument-specific research capability is governed through a **Market Truth Profile** concept (or exact semantic equivalent) — an architectural concept only; no `MarketTruthProfile` class is authorised until a concrete consumer contract requires one.
+- Strategy applicability is capability-aware: a strategy/research configuration may require market-truth capabilities beyond ordinary instrument identity (native tick/bid-ask replay, order-book context, event-level sequencing, etc.). Missing required capability → fail closed/not-applicable, never a fabricated equivalent or silent degrade.
+- Three distinct, non-blurring truth relationships: native-market truth, cross-market contextual truth (never silently promoted into execution truth), venue-specific microstructure truth (HMT-2 GC MBP-1 belongs here).
+- GC ≠ XAUUSD, reaffirmed (Amendment A-005): GC event truth is never XAUUSD execution truth; any GC→XAUUSD contextual use must be explicit, never silent.
+- **Platform genericity is mandatory; edge portability is not.** A GC-dependent edge may legitimately remain GOLD/XAUUSD-only — that is not a failure of DARWIN's multi-instrument architecture. A future instrument (crypto/equity/FX/futures) gets its own governed Market Truth Profile, never a second DARWIN.
+- Research sequence reaffirmed: XAUUSD candle causal core → HMT-2 data usability → governed actual-GC semantics/economics → controlled same-contract GC microstructure-value experiment → (if justified) separate GC-context-for-XAUUSD experiment → only then reconsider HMT-LIVE. The controlled same-contract experiment must never be confused with the later cross-market experiment.
+- `ResearchInputBinding`/`ResearchConfiguration` (PID-006A) are directionally compatible with A-006; no immediate schema migration required.
+- Documentation only — no implementation, migration, or new class/package authorised by A-006 itself.
+
+Authoritative detail: `docs/architecture/AMENDMENT-A006-MARKET-TRUTH-PROFILES.md`.
