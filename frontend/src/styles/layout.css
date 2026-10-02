@@ -281,6 +281,10 @@
   color: var(--evi-athena);
   background: var(--evi-athena-bg);
 }
+.evi-apollo-result {
+  color: var(--evi-apollo-result);
+  background: var(--evi-apollo-result-bg);
+}
 .evi-apollo {
   color: var(--evi-apollo);
   background: var(--evi-apollo-bg);

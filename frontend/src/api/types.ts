@@ -69,6 +69,7 @@ export interface MarketDataset {
 export type EvidenceLevel =
   | "SOURCE_CLAIM"
   | "ATHENA_RESULT"
+  | "APOLLO_RESULT"
   | "APOLLO_PROOF"
   | "PLUTUS_RESULT"
   | "LIVE";

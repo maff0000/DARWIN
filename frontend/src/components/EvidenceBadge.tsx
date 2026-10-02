@@ -1,9 +1,11 @@
 import type { EvidenceLevel } from "../api/types";
 
 // The single most important visual rule in ARENA (PID.md §11, PID-002 §9):
-// these five classes must never look interchangeable. Each gets its own
-// hue, its own label, and its own one-line explanation of what the number
-// actually proves — never a generic "performance" chip.
+// these classes must never look interchangeable. Each gets its own hue,
+// its own label, and its own one-line explanation of what the number
+// actually proves — never a generic "performance" chip. APOLLO_RESULT
+// (PID-006B) is deliberately its own distinct class, never sharing
+// APOLLO_PROOF's colour or label — it is explicitly NOT proof-eligible.
 const EVIDENCE: Record<
   EvidenceLevel,
   { label: string; short: string; explain: string; className: string }
@@ -19,6 +21,12 @@ const EVIDENCE: Record<
     short: "SEARCH",
     explain: "Historical optimisation/search result — not independent proof.",
     className: "evi-athena",
+  },
+  APOLLO_RESULT: {
+    label: "APOLLO result",
+    short: "REPLAY",
+    explain: "Mechanical APOLLO candle-replay result — not proof-eligible.",
+    className: "evi-apollo-result",
   },
   APOLLO_PROOF: {
     label: "APOLLO proof",
@@ -66,6 +74,7 @@ export function EvidenceExplain({ level }: { level: EvidenceLevel }) {
 export const EVIDENCE_LEVELS: EvidenceLevel[] = [
   "SOURCE_CLAIM",
   "ATHENA_RESULT",
+  "APOLLO_RESULT",
   "APOLLO_PROOF",
   "PLUTUS_RESULT",
   "LIVE",
