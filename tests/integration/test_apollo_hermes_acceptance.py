@@ -143,7 +143,8 @@ def _build_and_run(*, market_dataset, cost_methodology):
         partition_policy=partition_policy, execution_policy=execution_policy, dike_state=DikeState.DISABLED,
     )
     result = run_apollo_candle_causal_core(
-        strategy_version=strategy_version, parameter_set=parameter_set, execution_policy=execution_policy,
+        strategy_version=strategy_version, executable_plan=plan, parameter_set=parameter_set,
+        execution_policy=execution_policy, partition_policy=partition_policy,
         market_dataset=market_dataset, research_configuration=research_configuration, instrument_definition=instrument_definition,
     )
     return strategy_version, plan, parameter_set, partition_policy, execution_policy, research_configuration, result

@@ -4,6 +4,13 @@ engine fails CLOSED, before a single bar is processed (`run_preflight`
 never returns a `PreflightResult` on failure, so `run_apollo_replay` is
 never reached -- there is no partial/best-effort `ApolloEngineResult`
 anywhere in these tests).
+
+Central Architecture correction CA-006B-1/CA-006B-2: `run_preflight` now
+requires `executable_plan`/`partition_policy` as explicit inputs, and
+derives capability/instrument-applicability semantics from the compiled
+plan, never from a raw `StrategyVersion` directly -- `test_check1` below
+is rewritten accordingly (it now mutates the PLAN's own
+`semantic_payload`, not the `StrategyVersion`).
 """
 from __future__ import annotations
 
@@ -12,12 +19,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from darwin.apollo.errors import EngineCapabilityBlockedError, InvalidConfigurationError
+from darwin.apollo.errors import (
+    EngineCapabilityBlockedError,
+    InvalidConfigurationError,
+    PersistedFingerprintMismatchError,
+)
 from darwin.apollo.preflight import run_preflight
 from darwin.core.dike import DikeState
-from darwin.hermes.instrument_definition import (
-    InstrumentDefinition,
-)
+from darwin.hermes.instrument_definition import InstrumentDefinition
 from darwin.research_contracts.input_binding import (
     ResearchInputKind,
     build_research_input_binding,
@@ -28,10 +37,6 @@ from darwin.research_contracts.partition_policy import (
 )
 from darwin.research_contracts.research_configuration import (
     build_research_configuration,
-)
-from darwin.specification.applicability import (
-    InstrumentApplicability,
-    InstrumentApplicabilityKind,
 )
 from tests.fixtures.apollo_strategy import (
     apollo_entry_condition,
@@ -56,28 +61,62 @@ def test_valid_configuration_passes_preflight() -> None:
     bundle = build_apollo_fixture_bundle(dataset_id="ds-preflight-ok", rows=_rows())
     result = run_preflight(
         strategy_version=bundle.strategy_version,
+        executable_plan=bundle.executable_plan,
         parameter_set=bundle.parameter_set,
         execution_policy=bundle.execution_policy,
+        partition_policy=bundle.partition_policy,
         market_dataset=bundle.market_dataset,
         research_configuration=bundle.research_configuration,
         instrument_definition=bundle.instrument_definition,
     )
     assert result.entry_signal_spec.field == "CLOSE"
+    assert result.research_configuration_fingerprint == bundle.research_configuration.fingerprint
 
 
-# ---- check #1: instrument applicability --------------------------------
+# ---- check #1: instrument applicability (now plan-derived, CA-006B-1) --
 
 
 def test_check1_instrument_applicability_missing_xau_usd_blocks() -> None:
+    """Rewritten for CA-006B-1: the instrument-applicability check now
+    reads `executable_plan.semantic_payload`, not the raw
+    `StrategyVersion` -- mutating `strategy_version` alone (as the
+    pre-correction version of this test did) would no longer trip
+    anything, since the plan passed to preflight would still carry the
+    correct, original applicability. The adversarial mutation must be
+    made to the PLAN's own canonical payload."""
     bundle = build_apollo_fixture_bundle(dataset_id="ds-preflight-c1", rows=_rows())
-    wrong_applicability = InstrumentApplicability(
-        kind=InstrumentApplicabilityKind.EXPLICIT_SINGLE, instrument_ids=("EUR_USD",)
+    wrong_applicability_payload = {
+        "__type__": "InstrumentApplicability", "kind": "EXPLICIT_SINGLE",
+        "instrument_ids": ["EUR_USD"], "generic_criteria": [],
+    }
+    mutated_plan = dataclasses.replace(
+        bundle.executable_plan,
+        semantic_payload={**bundle.executable_plan.semantic_payload, "instrument_applicability": wrong_applicability_payload},
     )
-    mutated_strategy = dataclasses.replace(bundle.strategy_version, instrument_applicability=wrong_applicability)
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=mutated_strategy, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=mutated_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
+            research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
+        )
+
+
+def test_check1_instrument_generic_is_capability_blocked() -> None:
+    bundle = build_apollo_fixture_bundle(dataset_id="ds-preflight-c1b", rows=_rows())
+    generic_payload = {
+        "__type__": "InstrumentApplicability", "kind": "INSTRUMENT_GENERIC",
+        "instrument_ids": [], "generic_criteria": ["quote_asset == USD"],
+    }
+    mutated_plan = dataclasses.replace(
+        bundle.executable_plan,
+        semantic_payload={**bundle.executable_plan.semantic_payload, "instrument_applicability": generic_payload},
+    )
+    with pytest.raises(EngineCapabilityBlockedError):
+        run_preflight(
+            strategy_version=bundle.strategy_version, executable_plan=mutated_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
             research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
         )
 
@@ -99,8 +138,9 @@ def test_check2_configuration_instrument_mismatch_blocks() -> None:
     )
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
             research_configuration=reconfigured, instrument_definition=bundle.instrument_definition,
         )
 
@@ -113,8 +153,9 @@ def test_falsification6_input_binding_dataset_mismatch_blocks_before_replay() ->
     other_dataset = build_apollo_dataset("ds-preflight-different", _rows(n=6))
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=other_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=other_dataset,
             research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
         )
 
@@ -133,8 +174,9 @@ def test_falsification6_more_than_one_input_binding_blocks() -> None:
     )
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
             research_configuration=reconfigured, instrument_definition=bundle.instrument_definition,
         )
 
@@ -156,10 +198,12 @@ def test_check4_corrupted_dataset_fingerprint_blocks() -> None:
         partition_policy=build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=corrupted_binding),
         execution_policy=bundle.execution_policy, dike_state=DikeState.DISABLED,
     )
-    with pytest.raises(InvalidConfigurationError):
+    with pytest.raises(PersistedFingerprintMismatchError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=corrupted_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=build_research_partition_policy_version(role=ResearchPartitionRole.DEVELOPMENT, input_binding=corrupted_binding),
+            market_dataset=corrupted_dataset,
             research_configuration=reconfigured, instrument_definition=bundle.instrument_definition,
         )
 
@@ -170,10 +214,17 @@ def test_check4_corrupted_dataset_fingerprint_blocks() -> None:
 def test_check5_dataset_instrument_definition_id_does_not_match_definition_fingerprint() -> None:
     bundle = build_apollo_fixture_bundle(dataset_id="ds-preflight-c5", rows=_rows())
     corrupted_dataset = dataclasses.replace(bundle.market_dataset, instrument_definition_id="not-a-real-fingerprint")
-    with pytest.raises(InvalidConfigurationError):
+    # The corruption above also changes what compute_fingerprint recomputes
+    # (instrument_definition_id is itself one of the hashed inputs), so
+    # check #4's self-consistency recompute trips first -- this is the
+    # same real behaviour the pre-correction version of this test already
+    # exercised (PersistedFingerprintMismatchError, not a dedicated check
+    # #5-only code path for this particular adversarial shape).
+    with pytest.raises(PersistedFingerprintMismatchError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=corrupted_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=corrupted_dataset,
             research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
         )
 
@@ -211,8 +262,9 @@ def test_falsification7_parameter_set_strategy_mismatch_blocks_before_replay() -
 
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=bundle_a.strategy_version, parameter_set=parameter_set_b,
-            execution_policy=bundle_a.execution_policy, market_dataset=bundle_a.market_dataset,
+            strategy_version=bundle_a.strategy_version, executable_plan=bundle_a.executable_plan,
+            parameter_set=parameter_set_b, execution_policy=bundle_a.execution_policy,
+            partition_policy=bundle_a.partition_policy, market_dataset=bundle_a.market_dataset,
             research_configuration=bundle_a.research_configuration, instrument_definition=bundle_a.instrument_definition,
         )
 
@@ -232,8 +284,9 @@ def test_falsification8_unsupported_execution_policy_component_blocks_before_rep
     bundle = build_apollo_fixture_bundle(dataset_id="ds-preflight-c8", rows=_rows(), cost_methodology=bogus_cost)
     with pytest.raises(EngineCapabilityBlockedError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
             research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
         )
 
@@ -252,8 +305,9 @@ def test_falsification9_dike_guarded_is_rejected_outright() -> None:
     )
     with pytest.raises(InvalidConfigurationError):
         run_preflight(
-            strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-            execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+            strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+            parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+            partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
             research_configuration=guarded_configuration, instrument_definition=bundle.instrument_definition,
         )
 

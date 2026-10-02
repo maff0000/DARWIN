@@ -55,6 +55,17 @@ class CapabilityBlockReason(StrEnum):
     UNSUPPORTED_EXPRESSION_SHAPE = "UNSUPPORTED_EXPRESSION_SHAPE"
     UNSUPPORTED_EXIT_RULES = "UNSUPPORTED_EXIT_RULES"
     UNSUPPORTED_TIMEFRAME_MISMATCH = "UNSUPPORTED_TIMEFRAME_MISMATCH"
+    #: CA-006B-4 exhaustive supported-semantic-subset gate -- one reason
+    #: per StrategyVersion/ExecutableStrategyPlan semantic field this
+    #: engine slice does not implement, so a capability-block result
+    #: always names exactly which field tripped it, never a generic
+    #: "unsupported" bucket.
+    UNSUPPORTED_SESSION_SPEC = "UNSUPPORTED_SESSION_SPEC"
+    UNSUPPORTED_SETUP_EXPIRY = "UNSUPPORTED_SETUP_EXPIRY"
+    UNSUPPORTED_INTRABAR_AMBIGUITY_POLICY = "UNSUPPORTED_INTRABAR_AMBIGUITY_POLICY"
+    UNSUPPORTED_DATA_REQUIREMENT = "UNSUPPORTED_DATA_REQUIREMENT"
+    UNSUPPORTED_POLICY_DECLARATION = "UNSUPPORTED_POLICY_DECLARATION"
+    MISSING_RISK_PARAMETER_DECLARATION = "MISSING_RISK_PARAMETER_DECLARATION"
 
 
 @dataclass(frozen=True)

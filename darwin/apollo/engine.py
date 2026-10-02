@@ -30,6 +30,27 @@ exceptions raised while processing bar `i` are caught and re-raised as a
 typed `EngineDefectError` naming that bar index, aborting the replay --
 this module's own `ApolloError` subclasses (raised deliberately, e.g. by
 `evaluate_entry_signal`) are never re-wrapped.
+
+Central Architecture correction CA-006B-3: this function no longer merely
+trusts the caller to pass the SAME `MarketDataset` that was preflighted
+-- it mechanically re-verifies `market_dataset.dataset_id`/
+`.fingerprint_sha256` against the exact identities `PreflightResult`
+carries (`bound_dataset_id`/`bound_dataset_fingerprint`) BEFORE touching
+bar 0, raising a governed `InvalidConfigurationError` on any mismatch.
+
+Central Architecture correction CA-006B-6: the three evidence identities
+below each bind the relevant upstream identity -- `decision_stream_hash`
+binds engine methodology + the compiled plan's own fingerprint +
+`ParameterSetVersion.fingerprint` + the dataset's own content fingerprint
+(deliberately NOT the execution/cost policy -- decision identity stays
+cost-independent); `fill_trade_sequence_hash` additionally binds
+`decision_stream_hash` + `ExecutionPolicyVersion.fingerprint`;
+`economic_outcome_hash` additionally binds `fill_trade_sequence_hash`. A
+fourth, `evidence_envelope_hash`, binds `ResearchConfiguration.fingerprint`
++ the research-partition identity + engine methodology + all three output
+identities together, so a change to ANY upstream identity remains
+scientifically distinguishable even on the rare occasion the numeric
+replay output happens to come out identical.
 """
 from __future__ import annotations
 
@@ -38,11 +59,22 @@ from decimal import Decimal
 
 import numpy as np
 
-from darwin.apollo.errors import ApolloError, EngineDefectError
+from darwin.apollo.errors import (
+    ApolloError,
+    EngineDefectError,
+    InvalidConfigurationError,
+)
 from darwin.apollo.preflight import PreflightResult
 from darwin.apollo.signal import evaluate_entry_signal
 from darwin.hermes.dataset import MarketDataset, from_fixed_point
 from darwin.specification.fingerprint import canonical_hash, canonicalize
+
+#: Stable identity of this engine implementation -- bound into
+#: `decision_stream_hash`/`evidence_envelope_hash` (CA-006B-6) so a
+#: future engine upgrade never silently produces evidence
+#: indistinguishable from an earlier, differently-behaved implementation.
+ENGINE_ID = "darwin.apollo.engine.ApolloCandleCausalCore"
+ENGINE_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
@@ -146,16 +178,55 @@ class ApolloEngineResult:
     decision_stream_hash: str
     fill_trade_sequence_hash: str
     economic_outcome_hash: str
+    #: CA-006B-3/CA-006B-6: the exact bound identities this result was
+    #: produced against -- `darwin.apollo.persistence` independently
+    #: re-verifies these before pairing this result with a
+    #: `ResearchConfiguration`/`MarketDataset` row.
+    bound_dataset_id: str
+    bound_dataset_fingerprint: str
+    bound_research_configuration_fingerprint: str
+    #: CA-006B-6: binds ResearchConfiguration + partition + engine
+    #: methodology + all three output identities together.
+    evidence_envelope_hash: str
 
 
-def _decision_payload(decisions: tuple[DecisionRecord, ...]) -> list:
-    return [canonicalize(d) for d in decisions]
+def _decision_payload(
+    decisions: tuple[DecisionRecord, ...],
+    *,
+    executable_strategy_plan_fingerprint: str,
+    parameter_set_fingerprint: str,
+    dataset_fingerprint: str,
+) -> dict:
+    """CA-006B-6: binds engine methodology + the compiled plan's own
+    fingerprint + ParameterSetVersion's fingerprint + the dataset's
+    content fingerprint -- deliberately NEVER the execution/cost policy
+    (decision identity stays cost-independent, proven by
+    tests/unit/test_apollo_determinism_and_perturbation.py)."""
+    return {
+        "engine_id": ENGINE_ID,
+        "engine_version": ENGINE_VERSION,
+        "executable_strategy_plan_fingerprint": executable_strategy_plan_fingerprint,
+        "parameter_set_fingerprint": parameter_set_fingerprint,
+        "dataset_fingerprint": dataset_fingerprint,
+        "decisions": [canonicalize(d) for d in decisions],
+    }
 
 
 def _fill_trade_payload(
-    orders: tuple[OrderRecord, ...], fills: tuple[FillRecord, ...], trades: tuple[TradeRecord, ...]
+    orders: tuple[OrderRecord, ...],
+    fills: tuple[FillRecord, ...],
+    trades: tuple[TradeRecord, ...],
+    *,
+    decision_stream_hash: str,
+    execution_policy_fingerprint: str,
 ) -> dict:
+    """CA-006B-6: binds `decision_stream_hash` (so fill/trade identity is
+    traceably downstream of decision identity) plus
+    `ExecutionPolicyVersion.fingerprint` (every execution axis, including
+    cost -- fill prices themselves embed cost mechanics)."""
     return {
+        "decision_stream_hash": decision_stream_hash,
+        "execution_policy_fingerprint": execution_policy_fingerprint,
         "orders": [canonicalize(o) for o in orders],
         "fills": [canonicalize(f) for f in fills],
         "trades": [canonicalize(t) for t in trades],
@@ -166,13 +237,18 @@ def _economic_payload(
     trades: tuple[TradeRecord, ...],
     equity_curve: tuple[EquityPoint, ...],
     *,
+    fill_trade_sequence_hash: str,
     starting_capital_usd: str,
     final_balance_usd: str,
     final_equity_usd: str,
     peak_equity_usd: str,
     max_drawdown_usd: str,
 ) -> dict:
+    """CA-006B-6: binds `fill_trade_sequence_hash` (which already carries
+    the execution-policy/cost identity transitively) plus the economic
+    outcome payload itself."""
     return {
+        "fill_trade_sequence_hash": fill_trade_sequence_hash,
         "starting_capital_usd": starting_capital_usd,
         "trade_pnls": [t.realized_pnl_usd for t in trades],
         "equity_curve": [canonicalize(e) for e in equity_curve],
@@ -180,6 +256,28 @@ def _economic_payload(
         "final_equity_usd": final_equity_usd,
         "peak_equity_usd": peak_equity_usd,
         "max_drawdown_usd": max_drawdown_usd,
+    }
+
+
+def _evidence_envelope_payload(
+    *,
+    research_configuration_fingerprint: str,
+    research_partition_policy_fingerprint: str,
+    decision_stream_hash: str,
+    fill_trade_sequence_hash: str,
+    economic_outcome_hash: str,
+) -> dict:
+    """CA-006B-6: the explicit evidence-envelope identity binding
+    `ResearchConfiguration.fingerprint` + research-partition identity +
+    engine/methodology identity + the three output identities together."""
+    return {
+        "engine_id": ENGINE_ID,
+        "engine_version": ENGINE_VERSION,
+        "research_configuration_fingerprint": research_configuration_fingerprint,
+        "research_partition_policy_fingerprint": research_partition_policy_fingerprint,
+        "decision_stream_hash": decision_stream_hash,
+        "fill_trade_sequence_hash": fill_trade_sequence_hash,
+        "economic_outcome_hash": economic_outcome_hash,
     }
 
 
@@ -222,10 +320,26 @@ def _compute_retrospective_mae_mfe(
 def run_apollo_replay(*, preflight_result: PreflightResult, market_dataset: MarketDataset) -> ApolloEngineResult:
     """Runs the causal candle replay against an already-preflighted
     configuration (see `darwin.apollo.preflight.run_preflight`). Assumes
-    preflight has already passed -- this function never re-derives those
-    checks; it trusts `preflight_result` was produced by `run_preflight`
-    against the SAME `market_dataset` passed here.
+    preflight has already passed. Unlike earlier revisions of this
+    module, it no longer merely TRUSTS that `market_dataset` is the same
+    one `run_preflight` was given -- see the mechanical check immediately
+    below (CA-006B-3).
     """
+    if market_dataset.dataset_id != preflight_result.bound_dataset_id:
+        raise InvalidConfigurationError(
+            f"run_apollo_replay was given MarketDataset.dataset_id {market_dataset.dataset_id!r}, "
+            f"which does not match the dataset preflight actually bound "
+            f"({preflight_result.bound_dataset_id!r}) -- refusing to replay against a dataset "
+            f"that was never preflighted, before touching a single bar"
+        )
+    if market_dataset.fingerprint_sha256 != preflight_result.bound_dataset_fingerprint:
+        raise InvalidConfigurationError(
+            f"run_apollo_replay was given a MarketDataset whose fingerprint_sha256 "
+            f"({market_dataset.fingerprint_sha256!r}) does not match the dataset preflight "
+            f"actually bound ({preflight_result.bound_dataset_fingerprint!r}) -- refusing to "
+            f"replay against content that was never preflighted, before touching a single bar"
+        )
+
     spec = preflight_result.entry_signal_spec
     risk = preflight_result.risk_parameters
     qty_econ = preflight_result.quantity_economics
@@ -400,13 +514,36 @@ def run_apollo_replay(*, preflight_result: PreflightResult, market_dataset: Mark
         trades=tuple(trades), open_position=open_position, market_dataset=market_dataset, quantity=quantity
     )
 
-    decision_stream_hash = canonical_hash(_decision_payload(tuple(decisions)))
-    fill_trade_sequence_hash = canonical_hash(_fill_trade_payload(tuple(orders), tuple(fills), tuple(trades)))
+    decision_stream_hash = canonical_hash(
+        _decision_payload(
+            tuple(decisions),
+            executable_strategy_plan_fingerprint=preflight_result.executable_strategy_plan_fingerprint,
+            parameter_set_fingerprint=preflight_result.parameter_set_fingerprint,
+            dataset_fingerprint=preflight_result.bound_dataset_fingerprint,
+        )
+    )
+    fill_trade_sequence_hash = canonical_hash(
+        _fill_trade_payload(
+            tuple(orders), tuple(fills), tuple(trades),
+            decision_stream_hash=decision_stream_hash,
+            execution_policy_fingerprint=preflight_result.execution_policy_fingerprint,
+        )
+    )
     economic_outcome_hash = canonical_hash(
         _economic_payload(
-            tuple(trades), tuple(equity_curve), starting_capital_usd=str(qty_econ.starting_capital_usd),
+            tuple(trades), tuple(equity_curve), fill_trade_sequence_hash=fill_trade_sequence_hash,
+            starting_capital_usd=str(qty_econ.starting_capital_usd),
             final_balance_usd=str(balance), final_equity_usd=str(final_equity), peak_equity_usd=str(peak_equity),
             max_drawdown_usd=str(max_dd),
+        )
+    )
+    evidence_envelope_hash = canonical_hash(
+        _evidence_envelope_payload(
+            research_configuration_fingerprint=preflight_result.research_configuration_fingerprint,
+            research_partition_policy_fingerprint=preflight_result.research_partition_policy_fingerprint,
+            decision_stream_hash=decision_stream_hash,
+            fill_trade_sequence_hash=fill_trade_sequence_hash,
+            economic_outcome_hash=economic_outcome_hash,
         )
     )
 
@@ -428,4 +565,8 @@ def run_apollo_replay(*, preflight_result: PreflightResult, market_dataset: Mark
         decision_stream_hash=decision_stream_hash,
         fill_trade_sequence_hash=fill_trade_sequence_hash,
         economic_outcome_hash=economic_outcome_hash,
+        bound_dataset_id=preflight_result.bound_dataset_id,
+        bound_dataset_fingerprint=preflight_result.bound_dataset_fingerprint,
+        bound_research_configuration_fingerprint=preflight_result.research_configuration_fingerprint,
+        evidence_envelope_hash=evidence_envelope_hash,
     )

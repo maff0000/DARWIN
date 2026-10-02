@@ -103,29 +103,27 @@ FIXED_MECHANICAL_TEST_COST = ExecutionPolicyComponent(
     ),
 )
 
-#: The closed allowlist itself: axis -> {(component_id, component_version)}.
-_SUPPORTED: dict[ExecutionPolicyComponentKind, frozenset[tuple[str, str]]] = {
-    ExecutionPolicyComponentKind.TIMING_METHODOLOGY: frozenset(
-        {(TIMING_CLOSE_TO_NEXT_BAR_OPEN.component_id, TIMING_CLOSE_TO_NEXT_BAR_OPEN.component_version)}
-    ),
-    ExecutionPolicyComponentKind.PRICE_FILL_METHODOLOGY: frozenset(
-        {(PRICE_FILL_NEXT_BAR_OPEN.component_id, PRICE_FILL_NEXT_BAR_OPEN.component_version)}
-    ),
-    ExecutionPolicyComponentKind.INTRABAR_RESOLUTION_METHODOLOGY: frozenset(
-        {(INTRABAR_CONSERVATIVE_SL_FIRST.component_id, INTRABAR_CONSERVATIVE_SL_FIRST.component_version)}
-    ),
-    ExecutionPolicyComponentKind.COST_METHODOLOGY: frozenset(
-        {
-            (ZERO_COST.component_id, ZERO_COST.component_version),
-            (FIXED_MECHANICAL_TEST_COST.component_id, FIXED_MECHANICAL_TEST_COST.component_version),
-        }
-    ),
-    ExecutionPolicyComponentKind.QUANTITY_ECONOMIC_METHODOLOGY: frozenset(
-        {(QUANTITY_FIXED_ONE_TROY_OUNCE.component_id, QUANTITY_FIXED_ONE_TROY_OUNCE.component_version)}
-    ),
-    ExecutionPolicyComponentKind.SESSION_FORCE_FLAT_METHODOLOGY: frozenset(
-        {(SESSION_NO_FORCE_FLAT.component_id, SESSION_NO_FORCE_FLAT.component_version)}
-    ),
+#: The closed allowlist itself: axis -> (canonical ExecutionPolicyComponent, ...).
+#:
+#: Central Architecture correction CA-006B-5: this maps each axis to the
+#: FULL canonical `ExecutionPolicyComponent` object(s) it supports --
+#: never just an `(component_id, component_version)` pair. `configuration`
+#: itself participates in semantic identity (and in the component's own
+#: contribution to `ExecutionPolicyVersion.fingerprint`): a counterfeit
+#: component sharing a canonical id/version but carrying an ALTERED
+#: `configuration` (e.g. `FIXED_ONE_TROY_OUNCE_USD_ACCOUNT/v1` claiming
+#: `quantity=2`) must never silently masquerade as the real, canonical
+#: component merely by matching its id/version. `ExecutionPolicyComponent`
+#: is a frozen dataclass, so `==` here is genuine structural equality over
+#: every field (`kind`, `component_id`, `component_version`,
+#: `configuration`) -- not a hand-rolled partial comparison.
+_SUPPORTED: dict[ExecutionPolicyComponentKind, tuple[ExecutionPolicyComponent, ...]] = {
+    ExecutionPolicyComponentKind.TIMING_METHODOLOGY: (TIMING_CLOSE_TO_NEXT_BAR_OPEN,),
+    ExecutionPolicyComponentKind.PRICE_FILL_METHODOLOGY: (PRICE_FILL_NEXT_BAR_OPEN,),
+    ExecutionPolicyComponentKind.INTRABAR_RESOLUTION_METHODOLOGY: (INTRABAR_CONSERVATIVE_SL_FIRST,),
+    ExecutionPolicyComponentKind.COST_METHODOLOGY: (ZERO_COST, FIXED_MECHANICAL_TEST_COST),
+    ExecutionPolicyComponentKind.QUANTITY_ECONOMIC_METHODOLOGY: (QUANTITY_FIXED_ONE_TROY_OUNCE,),
+    ExecutionPolicyComponentKind.SESSION_FORCE_FLAT_METHODOLOGY: (SESSION_NO_FORCE_FLAT,),
 }
 
 _AXIS_FIELDS: tuple[str, ...] = (
@@ -140,24 +138,39 @@ _AXIS_FIELDS: tuple[str, ...] = (
 
 def check_execution_policy_capability(execution_policy: ExecutionPolicyVersion) -> None:
     """PID-006B preflight check #8: `ExecutionPolicyVersion` must contain
-    ONLY components this engine slice actually supports. Raises
+    ONLY components this engine slice actually supports -- matched by
+    FULL structural equality (kind + id + version + configuration), not
+    merely by `(component_id, component_version)` (CA-006B-5). Raises
     `EngineCapabilityBlockedError` (never a bare crash mid-replay -- this
     always runs before any bar is touched) the instant any axis carries a
-    component/version pair outside `_SUPPORTED`.
+    component outside `_SUPPORTED`, including a component whose id/
+    version matches a canonical one but whose `configuration` has been
+    altered.
     """
     for axis in _AXIS_FIELDS:
         component: ExecutionPolicyComponent = getattr(execution_policy, axis)
         allowed = _SUPPORTED[component.kind]
-        key = (component.component_id, component.component_version)
-        if key not in allowed:
+        if component not in allowed:
+            id_version_match = next(
+                (c for c in allowed if c.component_id == component.component_id and c.component_version == component.component_version),
+                None,
+            )
+            if id_version_match is not None:
+                detail_msg = (
+                    f"id/version {component.component_id!r}/{component.component_version!r} matches a "
+                    f"canonical component, but its configuration {component.configuration!r} does not "
+                    f"match the canonical configuration {id_version_match.configuration!r} -- a "
+                    f"counterfeit configuration never masquerades as the real component"
+                )
+            else:
+                detail_msg = f"Supported for this axis: {[(c.component_id, c.component_version) for c in allowed]}"
             raise EngineCapabilityBlockedError(
                 f"ExecutionPolicyVersion axis {component.kind.value} selects "
                 f"{component.component_id!r}/{component.component_version!r}, which this "
-                f"APOLLO Candle Causal Core (v1) does not support. Supported for this axis: "
-                f"{sorted(allowed)}",
+                f"APOLLO Candle Causal Core (v1) does not support. {detail_msg}",
                 context=CapabilityBlockContext(
                     reason=CapabilityBlockReason.UNSUPPORTED_EXECUTION_POLICY_COMPONENT,
                     subject_ref=f"{component.kind.value}:{component.component_id}/{component.component_version}",
-                    detail=(("axis", component.kind.value),),
+                    detail=(("axis", component.kind.value), ("configuration_counterfeit", str(id_version_match is not None))),
                 ),
             )

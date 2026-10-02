@@ -95,5 +95,5 @@ def test_no_hardcoded_tp_first_component_anywhere_in_apollo() -> None:
     from darwin.apollo.capability import _SUPPORTED
 
     for axis, allowed in _SUPPORTED.items():
-        for component_id, _component_version in allowed:
-            assert component_id != "TP_FIRST", f"axis {axis} allowlists TP_FIRST, which PID-006B forbids"
+        for component in allowed:
+            assert component.component_id != "TP_FIRST", f"axis {axis} allowlists TP_FIRST, which PID-006B forbids"

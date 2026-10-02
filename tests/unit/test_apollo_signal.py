@@ -1,117 +1,19 @@
-"""PID-006B entry-signal capability check + live decision function tests."""
+"""PID-006B engine-native entry-signal shape + live decision function
+tests. The capability-gate tests (which derive `EntrySignalSpec` from a
+compiled `ExecutableStrategyPlan`) now live in
+tests/unit/test_apollo_plan_adapter.py (Central Architecture correction
+CA-006B-1) -- this file is purely about the already-resolved
+`EntrySignalSpec` shape and the pure per-bar evaluator."""
 from __future__ import annotations
 
-import dataclasses
 import inspect
 from decimal import Decimal
 
 import pytest
 
-from darwin.apollo.errors import CapabilityBlockReason, EngineCapabilityBlockedError
-from darwin.apollo.signal import (
-    EntrySignalSpec,
-    check_strategy_capability,
-    evaluate_entry_signal,
-)
+from darwin.apollo.signal import EntrySignalSpec, evaluate_entry_signal
 from darwin.hermes.dataset import to_fixed_point
-from darwin.specification.composition import (
-    AllComposition,
-    Direction,
-)
-from darwin.specification.expressions import (
-    BooleanExpression,
-    BooleanOperator,
-    ComparisonOperator,
-)
-from tests.fixtures.apollo_strategy import (
-    apollo_entry_condition,
-    build_apollo_strategy_version,
-)
-from tests.fixtures.specification_drafts import simple_atomic_condition
-
-
-def test_supported_strategy_resolves_to_entry_signal_spec() -> None:
-    sv = build_apollo_strategy_version()
-    spec = check_strategy_capability(sv)
-    assert spec.field == "CLOSE"
-    assert spec.operator == ComparisonOperator.GT
-    assert spec.right_kind == "PARAMETER"
-    assert spec.right_parameter_id == "entry_threshold_usd"
-
-
-def test_non_atomic_composition_is_capability_blocked() -> None:
-    sv = build_apollo_strategy_version()
-    all_composition = AllComposition(
-        composition_id="all-1",
-        components=(apollo_entry_condition("leg_0"), simple_atomic_condition("leg_1")),
-    )
-    mutated = dataclasses.replace(sv, composition=all_composition)
-    with pytest.raises(EngineCapabilityBlockedError) as exc_info:
-        check_strategy_capability(mutated)
-    assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_COMPOSITION_SHAPE
-
-
-def test_short_direction_is_capability_blocked() -> None:
-    sv = build_apollo_strategy_version()
-    short_condition = apollo_entry_condition(direction=Direction.SHORT)
-    mutated = dataclasses.replace(sv, composition=short_condition)
-    with pytest.raises(EngineCapabilityBlockedError) as exc_info:
-        check_strategy_capability(mutated)
-    assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_DIRECTION
-
-
-def test_nonempty_exit_rules_is_capability_blocked() -> None:
-    sv = build_apollo_strategy_version()
-    mutated = dataclasses.replace(sv, exit_rules=(simple_atomic_condition("exit_1"),))
-    with pytest.raises(EngineCapabilityBlockedError) as exc_info:
-        check_strategy_capability(mutated)
-    assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_EXIT_RULES
-
-
-def test_crosses_above_operator_is_capability_blocked() -> None:
-    """CROSSES_ABOVE/CROSSES_BELOW require previous-bar state -- explicitly
-    not implemented in this v1 slice."""
-    sv = build_apollo_strategy_version()
-    condition = sv.composition
-    mutated_expression = dataclasses.replace(condition.expression, operator=ComparisonOperator.CROSSES_ABOVE)
-    mutated_condition = dataclasses.replace(condition, expression=mutated_expression)
-    mutated = dataclasses.replace(sv, composition=mutated_condition)
-    with pytest.raises(EngineCapabilityBlockedError) as exc_info:
-        check_strategy_capability(mutated)
-    assert exc_info.value.context.reason == CapabilityBlockReason.UNSUPPORTED_EXPRESSION_SHAPE
-
-
-def test_boolean_expression_root_is_capability_blocked() -> None:
-    sv = build_apollo_strategy_version()
-    condition = sv.composition
-    boolean_expr = BooleanExpression(
-        operator=BooleanOperator.AND,
-        operands=(condition.expression, condition.expression),
-    )
-    mutated_condition = dataclasses.replace(condition, expression=boolean_expr)
-    mutated = dataclasses.replace(sv, composition=mutated_condition)
-    with pytest.raises(EngineCapabilityBlockedError):
-        check_strategy_capability(mutated)
-
-
-def test_volume_field_is_not_supported() -> None:
-    """VOLUME is not a price -- excluded from the supported OHLCV field set."""
-    sv = build_apollo_strategy_version()
-    condition = sv.composition
-    from darwin.specification.data_requirements import FactClass
-    from darwin.specification.facts import CanonicalFactReference, DataAuthorityClass
-    from darwin.specification.timeframe import Timeframe
-
-    volume_ref = CanonicalFactReference(
-        fact_key="OHLCV.VOLUME", fact_class=FactClass.MARKET_OHLCV,
-        authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET, unit="USD_PER_TROY_OUNCE",
-        timeframe=Timeframe("H1"), requirement_id="hermes_xau_usd_h1_ohlcv",
-    )
-    mutated_expression = dataclasses.replace(condition.expression, left=volume_ref)
-    mutated_condition = dataclasses.replace(condition, expression=mutated_expression)
-    mutated = dataclasses.replace(sv, composition=mutated_condition)
-    with pytest.raises(EngineCapabilityBlockedError):
-        check_strategy_capability(mutated)
+from darwin.specification.expressions import ComparisonOperator
 
 
 @pytest.mark.parametrize(

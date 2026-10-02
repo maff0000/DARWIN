@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import psycopg
 
 from darwin.apollo.engine import ApolloEngineResult
+from darwin.apollo.errors import InvalidConfigurationError
 from darwin.core.dike import DikeState
 from darwin.core.evidence import EvidenceLevel
 from darwin.core.identities import new_id
@@ -114,7 +115,34 @@ def persist_apollo_result(
     result summary as JSON in `reference`, following the same convention
     `darwin.research_store.repositories.EvidenceRecordRepository.create`
     already uses for every other evidence row in this schema.
+
+    CA-006B adversarial test 14: refuses to pair `engine_result` with a
+    `research_configuration`/`market_dataset` other than the ones that
+    actually produced it -- `engine_result.bound_*` identities (set by
+    `darwin.apollo.engine.run_apollo_replay` from the exact
+    `PreflightResult` it ran against) must agree with the objects passed
+    to THIS call.
     """
+    if engine_result.bound_dataset_id != market_dataset.dataset_id:
+        raise InvalidConfigurationError(
+            f"ApolloEngineResult was produced against MarketDataset.dataset_id "
+            f"{engine_result.bound_dataset_id!r}, not the one passed to persist_apollo_result "
+            f"({market_dataset.dataset_id!r}) -- refusing to persist a mismatched pairing"
+        )
+    if engine_result.bound_dataset_fingerprint != market_dataset.fingerprint_sha256:
+        raise InvalidConfigurationError(
+            "ApolloEngineResult was produced against a MarketDataset with a different content "
+            "fingerprint than the one passed to persist_apollo_result -- refusing to persist a "
+            "mismatched pairing"
+        )
+    if engine_result.bound_research_configuration_fingerprint != research_configuration.fingerprint:
+        raise InvalidConfigurationError(
+            f"ApolloEngineResult was produced against ResearchConfiguration.fingerprint "
+            f"{engine_result.bound_research_configuration_fingerprint!r}, not the one passed to "
+            f"persist_apollo_result ({research_configuration.fingerprint!r}) -- refusing to "
+            f"persist a mismatched pairing"
+        )
+
     persist_market_dataset_if_absent(conn, market_dataset)
 
     run = create_research_run(
@@ -149,6 +177,7 @@ def persist_apollo_result(
         "decision_stream_hash": engine_result.decision_stream_hash,
         "fill_trade_sequence_hash": engine_result.fill_trade_sequence_hash,
         "economic_outcome_hash": engine_result.economic_outcome_hash,
+        "evidence_envelope_hash": engine_result.evidence_envelope_hash,
         "research_configuration_fingerprint": research_configuration.fingerprint,
     }
     record = EvidenceRecord(

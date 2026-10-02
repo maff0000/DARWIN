@@ -28,8 +28,9 @@ def _run(rows, **overrides):
     dataset_id = overrides.pop("dataset_id", "ds-perturb")
     bundle = build_apollo_fixture_bundle(dataset_id=dataset_id, rows=rows, **overrides)
     result = run_apollo_candle_causal_core(
-        strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-        execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+        strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+        parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+        partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
         research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
     )
     return result, bundle

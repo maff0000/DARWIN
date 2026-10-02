@@ -117,8 +117,9 @@ def _persist_one_run(pg_config, *, dataset_id: str, cost_methodology) -> str:
         cost_methodology=cost_methodology,
     )
     result = run_apollo_candle_causal_core(
-        strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-        execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+        strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+        parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+        partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
         research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
     )
     with connection(pg_config) as conn:
@@ -160,8 +161,9 @@ def test_persisted_run_binds_configuration_fingerprint_and_evidence_summary(pg_c
         dataset_id=new_id(), rows=_rows(), stop_loss_distance=Decimal(1000), take_profit_distance=Decimal(1000),
     )
     result = run_apollo_candle_causal_core(
-        strategy_version=bundle.strategy_version, parameter_set=bundle.parameter_set,
-        execution_policy=bundle.execution_policy, market_dataset=bundle.market_dataset,
+        strategy_version=bundle.strategy_version, executable_plan=bundle.executable_plan,
+        parameter_set=bundle.parameter_set, execution_policy=bundle.execution_policy,
+        partition_policy=bundle.partition_policy, market_dataset=bundle.market_dataset,
         research_configuration=bundle.research_configuration, instrument_definition=bundle.instrument_definition,
     )
     with connection(pg_config) as conn:
