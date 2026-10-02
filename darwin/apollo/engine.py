@@ -45,12 +45,55 @@ binds engine methodology + the compiled plan's own fingerprint +
 (deliberately NOT the execution/cost policy -- decision identity stays
 cost-independent); `fill_trade_sequence_hash` additionally binds
 `decision_stream_hash` + `ExecutionPolicyVersion.fingerprint`;
-`economic_outcome_hash` additionally binds `fill_trade_sequence_hash`. A
-fourth, `evidence_envelope_hash`, binds `ResearchConfiguration.fingerprint`
-+ the research-partition identity + engine methodology + all three output
+`economic_outcome_hash` additionally binds `fill_trade_sequence_hash` AND
+the MAE/MFE excursion evidence (CA-006B-9). A fourth,
+`evidence_envelope_hash`, binds `ResearchConfiguration.fingerprint` +
+the research-partition identity + engine methodology + all three output
 identities together, so a change to ANY upstream identity remains
 scientifically distinguishable even on the rare occasion the numeric
 replay output happens to come out identical.
+
+Central Architecture correction CA-006B-9 (MAE/MFE candle-resolution
+governance): at OHLC resolution, exact intrabar ordering is unknowable --
+presenting a completed trade's full exit-bar high/low as if it were
+certain, exact excursion would silently present ambiguous data as exact
+fact (extrema on the exit bar can occur AFTER the position has already
+closed within that same bar). This module adopts ONE coherent, documented,
+asymmetric methodology (`MAE_MFE_METHODOLOGY_ID = "CONSERVATIVE_EXCURSION_V1"`),
+chosen deliberately to never understate risk and never overstate reward:
+
+- MAE (adverse excursion) always uses the FULL raw low across the whole
+  entry-to-exit bar range, INCLUDING the exit bar itself -- any adverse
+  price action on the exit bar is credited as real risk exposure even if
+  its exact timing (before/after the trigger) is unknowable, because a
+  risk measure must never hide a real adverse print behind an ambiguity
+  excuse.
+- MFE (favourable excursion) uses the full raw high across every bar
+  STRICTLY BEFORE the exit bar (unambiguous -- the trade was definitely
+  open the whole bar), but caps the exit bar's own contribution at the
+  CERTAIN evidence only: if the trade exited via TAKE_PROFIT, the exit
+  bar is known to have reached at least the TP trigger price (that is
+  why it exited) -- that certain level is credited, and nothing further,
+  even if the raw bar high is higher (consistent with the same
+  CONSERVATIVE_SL_FIRST discipline already governing the exit itself: SL
+  wins when ambiguous, so any further favourable excursion on that bar
+  is deliberately never credited beyond the trigger that actually
+  realised it). If it exited via STOP_LOSS, the exit bar's own high is
+  EXCLUDED entirely from MFE -- a same-bar favourable print on a
+  stop-out bar is exactly the ambiguous, possibly-post-exit case this
+  correction exists to stop presenting as fact. A still-OPEN position
+  (never exited) has no exit-bar ambiguity at all and keeps the full raw
+  high/low across its entire range unchanged.
+
+Every `MaeMfeRecord` explicitly states its own `methodology_id` and
+measurement interval (`measurement_start_bar_index`/
+`measurement_end_bar_index`), plus a human-readable `mae_resolution`/
+`mfe_resolution` note naming exactly how the exit bar was handled -- this
+evidence is never a bare, falsely-precise number with no stated
+provenance. The MAE/MFE records themselves are bound into
+`economic_outcome_hash` (via `_economic_payload`), so a change to this
+excursion-resolution methodology changes the governed economic evidence
+identity even when every other recorded figure is unchanged.
 """
 from __future__ import annotations
 
@@ -59,6 +102,7 @@ from decimal import Decimal
 
 import numpy as np
 
+from darwin.apollo.economics import RiskParameters
 from darwin.apollo.errors import (
     ApolloError,
     EngineDefectError,
@@ -75,6 +119,12 @@ from darwin.specification.fingerprint import canonical_hash, canonicalize
 #: indistinguishable from an earlier, differently-behaved implementation.
 ENGINE_ID = "darwin.apollo.engine.ApolloCandleCausalCore"
 ENGINE_VERSION = "1.0.0"
+
+#: CA-006B-9: the one governed MAE/MFE candle-resolution methodology this
+#: engine implements -- see module docstring for the full rationale.
+#: Bound into every `MaeMfeRecord` and, transitively, into
+#: `economic_outcome_hash`.
+MAE_MFE_METHODOLOGY_ID = "CONSERVATIVE_EXCURSION_V1"
 
 
 @dataclass(frozen=True)
@@ -151,12 +201,21 @@ class EquityPoint:
 @dataclass(frozen=True)
 class MaeMfeRecord:
     """Retrospective-only excursion evidence, computed once per completed
-    trade AFTER the causal replay loop has finished -- see module
-    docstring."""
+    trade (or still-open position) AFTER the causal replay loop has
+    finished -- see module docstring for the full CA-006B-9 methodology.
+    Never a bare number: `methodology_id` + the measurement interval +
+    an explicit per-side resolution note are always carried alongside the
+    USD figures, so this evidence can never be mistaken for a
+    falsely-precise single number with no stated provenance."""
 
     trade_id: str
     mae_usd: str
     mfe_usd: str
+    methodology_id: str
+    measurement_start_bar_index: int
+    measurement_end_bar_index: int
+    mae_resolution: str
+    mfe_resolution: str
 
 
 @dataclass(frozen=True)
@@ -238,6 +297,7 @@ def _economic_payload(
     equity_curve: tuple[EquityPoint, ...],
     *,
     fill_trade_sequence_hash: str,
+    mae_mfe: tuple[MaeMfeRecord, ...],
     starting_capital_usd: str,
     final_balance_usd: str,
     final_equity_usd: str,
@@ -246,12 +306,17 @@ def _economic_payload(
 ) -> dict:
     """CA-006B-6: binds `fill_trade_sequence_hash` (which already carries
     the execution-policy/cost identity transitively) plus the economic
-    outcome payload itself."""
+    outcome payload itself. CA-006B-9: also binds the full `mae_mfe`
+    excursion evidence (including its `methodology_id`/measurement
+    interval/resolution notes) -- a change to the excursion-resolution
+    methodology, or to any excursion value it produces, changes this
+    hash even when every other recorded economic figure is unchanged."""
     return {
         "fill_trade_sequence_hash": fill_trade_sequence_hash,
         "starting_capital_usd": starting_capital_usd,
         "trade_pnls": [t.realized_pnl_usd for t in trades],
         "equity_curve": [canonicalize(e) for e in equity_curve],
+        "mae_mfe": [canonicalize(m) for m in mae_mfe],
         "final_balance_usd": final_balance_usd,
         "final_equity_usd": final_equity_usd,
         "peak_equity_usd": peak_equity_usd,
@@ -282,37 +347,84 @@ def _evidence_envelope_payload(
 
 
 def _compute_retrospective_mae_mfe(
-    *, trades: tuple[TradeRecord, ...], open_position: OpenPositionState | None, market_dataset: MarketDataset, quantity: Decimal
+    *,
+    trades: tuple[TradeRecord, ...],
+    open_position: OpenPositionState | None,
+    market_dataset: MarketDataset,
+    quantity: Decimal,
+    risk: RiskParameters,
 ) -> tuple[MaeMfeRecord, ...]:
     """Wholly separate from, and called strictly AFTER, the causal replay
-    loop. Reads the FULL `high_fp`/`low_fp` arrays across each trade's
-    entry-to-exit bar range (inclusive) -- deliberately a different
-    function, with a different signature, from
+    loop. Reads the FULL `high_fp`/`low_fp` arrays -- deliberately a
+    different function, with a different signature, from
     `darwin.apollo.signal.evaluate_entry_signal`, which never receives an
-    array at all. MAE/MFE for a still-open position at end-of-data are
-    computed over the entry-to-last-available-bar range -- still strictly
-    retrospective (using only data that has already occurred), never
-    exposed to the live decision path.
+    array at all. See the module docstring (CA-006B-9) for the full,
+    governed, asymmetric `CONSERVATIVE_EXCURSION_V1` methodology this
+    implements: MAE always uses the complete raw low across the whole
+    range (including the exit bar -- never understate risk); MFE excludes
+    or caps the exit bar's own contribution at the certain trigger
+    evidence only (never overstate reward from an ambiguous, possibly
+    post-exit print). A still-open position has no exit-bar ambiguity at
+    all and keeps the full raw range for both sides, unchanged.
     """
     high_fp = market_dataset.high_fp
     low_fp = market_dataset.low_fp
     records: list[MaeMfeRecord] = []
 
-    def _excursion(entry_fp: int, start: int, end: int) -> tuple[Decimal, Decimal]:
+    def _mae_usd(entry_fp: int, start: int, end: int) -> Decimal:
         worst_low = int(np.min(low_fp[start : end + 1]))
-        best_high = int(np.max(high_fp[start : end + 1]))
         mae_fp = max(0, entry_fp - worst_low)
+        return from_fixed_point(mae_fp) * quantity
+
+    def _mfe_usd_full_range(entry_fp: int, start: int, end: int) -> Decimal:
+        best_high = int(np.max(high_fp[start : end + 1]))
         mfe_fp = max(0, best_high - entry_fp)
-        return from_fixed_point(mae_fp) * quantity, from_fixed_point(mfe_fp) * quantity
+        return from_fixed_point(mfe_fp) * quantity
 
     for trade in trades:
-        mae_usd, mfe_usd = _excursion(trade.entry_fill_price_fp, trade.entry_bar_index, trade.exit_bar_index)
-        records.append(MaeMfeRecord(trade_id=trade.trade_id, mae_usd=str(mae_usd), mfe_usd=str(mfe_usd)))
+        entry_fp = trade.entry_fill_price_fp
+        start, end = trade.entry_bar_index, trade.exit_bar_index
+        mae_usd = _mae_usd(entry_fp, start, end)
+
+        if end > start:
+            # Bars strictly BEFORE the exit bar: unambiguous, the position
+            # was definitely open for the whole bar.
+            prior_high_fp = int(np.max(high_fp[start:end]))
+        else:
+            # Same-bar exit: no prior bars exist at all.
+            prior_high_fp = entry_fp
+
+        if trade.exit_reason == "TAKE_PROFIT":
+            tp_price_fp = entry_fp + risk.take_profit_distance_fp
+            best_high_certain_fp = max(prior_high_fp, tp_price_fp)
+            mfe_resolution = "CAPPED_AT_TAKE_PROFIT_TRIGGER_EXIT_BAR_BEYOND_TRIGGER_EXCLUDED"
+        else:  # STOP_LOSS
+            best_high_certain_fp = prior_high_fp
+            mfe_resolution = "EXIT_BAR_EXCLUDED_STOP_LOSS_AMBIGUITY"
+        mfe_fp = max(0, best_high_certain_fp - entry_fp)
+        mfe_usd = from_fixed_point(mfe_fp) * quantity
+
+        records.append(
+            MaeMfeRecord(
+                trade_id=trade.trade_id, mae_usd=str(mae_usd), mfe_usd=str(mfe_usd),
+                methodology_id=MAE_MFE_METHODOLOGY_ID, measurement_start_bar_index=start, measurement_end_bar_index=end,
+                mae_resolution="FULL_RANGE_INCLUSIVE_OF_EXIT_BAR", mfe_resolution=mfe_resolution,
+            )
+        )
 
     if open_position is not None:
         last_bar = market_dataset.record_count - 1
-        mae_usd, mfe_usd = _excursion(open_position.entry_fill_price_fp, open_position.entry_bar_index, last_bar)
-        records.append(MaeMfeRecord(trade_id=open_position.trade_id, mae_usd=str(mae_usd), mfe_usd=str(mfe_usd)))
+        entry_fp = open_position.entry_fill_price_fp
+        mae_usd = _mae_usd(entry_fp, open_position.entry_bar_index, last_bar)
+        mfe_usd = _mfe_usd_full_range(entry_fp, open_position.entry_bar_index, last_bar)
+        records.append(
+            MaeMfeRecord(
+                trade_id=open_position.trade_id, mae_usd=str(mae_usd), mfe_usd=str(mfe_usd),
+                methodology_id=MAE_MFE_METHODOLOGY_ID, measurement_start_bar_index=open_position.entry_bar_index,
+                measurement_end_bar_index=last_bar, mae_resolution="FULL_RANGE_POSITION_STILL_OPEN",
+                mfe_resolution="FULL_RANGE_POSITION_STILL_OPEN",
+            )
+        )
 
     return tuple(records)
 
@@ -511,7 +623,7 @@ def run_apollo_replay(*, preflight_result: PreflightResult, market_dataset: Mark
 
     final_equity = equity_curve[-1].equity_usd if equity_curve else str(balance)
     mae_mfe = _compute_retrospective_mae_mfe(
-        trades=tuple(trades), open_position=open_position, market_dataset=market_dataset, quantity=quantity
+        trades=tuple(trades), open_position=open_position, market_dataset=market_dataset, quantity=quantity, risk=risk
     )
 
     decision_stream_hash = canonical_hash(
@@ -531,7 +643,7 @@ def run_apollo_replay(*, preflight_result: PreflightResult, market_dataset: Mark
     )
     economic_outcome_hash = canonical_hash(
         _economic_payload(
-            tuple(trades), tuple(equity_curve), fill_trade_sequence_hash=fill_trade_sequence_hash,
+            tuple(trades), tuple(equity_curve), fill_trade_sequence_hash=fill_trade_sequence_hash, mae_mfe=mae_mfe,
             starting_capital_usd=str(qty_econ.starting_capital_usd),
             final_balance_usd=str(balance), final_equity_usd=str(final_equity), peak_equity_usd=str(peak_equity),
             max_drawdown_usd=str(max_dd),

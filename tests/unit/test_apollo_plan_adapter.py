@@ -36,11 +36,12 @@ def _mutate_payload(plan, **overrides):
 
 def test_supported_plan_resolves_to_entry_signal_spec() -> None:
     plan = _plan()
-    spec = check_plan_capability(plan)
-    assert spec.field == "CLOSE"
-    assert spec.operator == "GT"
-    assert spec.right_kind == "PARAMETER"
-    assert spec.right_parameter_id == "entry_threshold_usd"
+    result = check_plan_capability(plan)
+    assert result.entry_signal_spec.field == "CLOSE"
+    assert result.entry_signal_spec.operator == "GT"
+    assert result.entry_signal_spec.right_kind == "PARAMETER"
+    assert result.entry_signal_spec.right_parameter_id == "entry_threshold_usd"
+    assert result.required_historical_depth_bars == 1
     assert plan_condition_timeframe_code(plan) == "H1"
 
 

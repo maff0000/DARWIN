@@ -69,8 +69,8 @@ from darwin.research_contracts.research_configuration import (
     ResearchConfiguration,
     compute_research_configuration_fingerprint,
 )
-from darwin.specification.domain import StrategyVersion
-from darwin.specification.fingerprint import canonical_hash
+from darwin.specification.domain import SEMANTIC_FIELD_NAMES, StrategyVersion
+from darwin.specification.fingerprint import canonical_hash, canonicalize
 
 #: PID-006B scope: XAU_USD, one timeframe, one MarketDataset -- this engine
 #: slice's ONLY supported instrument in v1.
@@ -271,6 +271,51 @@ def _check_strategy_plan_provenance(strategy_version: StrategyVersion, executabl
         )
 
 
+def _check_plan_payload_matches_strategy_version(
+    strategy_version: StrategyVersion, executable_plan: ExecutableStrategyPlan
+) -> None:
+    """CA-006B-7: proving `source_semantic_fingerprint` and `fingerprint`
+    both "match" is NOT sufficient -- a caller can construct a plan whose
+    `semantic_payload` has been altered and then correctly recompute
+    `fingerprint` over that ALTERED payload (`compute_plan_fingerprint`
+    just hashes whatever payload it is handed). This independently
+    recomputes the EXACT canonical semantic payload
+    `CanonicalStrategyCompiler.compile()` itself would have produced from
+    `strategy_version` -- via the same `SEMANTIC_FIELD_NAMES`/
+    `canonicalize` construction, reused verbatim, never a second
+    compiler -- and compares it field-for-field against the plan's own
+    `semantic_payload`. `darwin/research_contracts/compiler.py` is never
+    touched or re-implemented; this only reads `StrategyVersion` and the
+    plan's already-produced payload."""
+    recomputed_payload = {name: canonicalize(getattr(strategy_version, name)) for name in SEMANTIC_FIELD_NAMES}
+    if recomputed_payload != executable_plan.semantic_payload:
+        mismatched_fields = sorted(
+            name for name in SEMANTIC_FIELD_NAMES if recomputed_payload.get(name) != executable_plan.semantic_payload.get(name)
+        )
+        raise InvalidConfigurationError(
+            f"ExecutableStrategyPlan.semantic_payload does not match the canonical semantic "
+            f"payload independently recomputed from the supplied StrategyVersion -- mismatched "
+            f"field(s): {mismatched_fields} -- the plan's source-identity fields may agree while "
+            f"its actual compiled content has been altered; APOLLO never executes a plan whose "
+            f"payload cannot be reproduced from the StrategyVersion it claims to come from"
+        )
+
+
+def _check_historical_depth(market_dataset: MarketDataset, *, required_historical_depth_bars: int) -> None:
+    """CA-006B-8: mandatory historical depth is honoured before replay --
+    PID-006B supports `BARS` depth units only (enforced in
+    `plan_adapter._check_data_requirements`, which also returns the
+    required count read from the plan); here, independently, the
+    supplied `MarketDataset` must actually contain at least that many
+    governed bars, or replay fails closed before bar 0."""
+    if market_dataset.record_count < required_historical_depth_bars:
+        raise InvalidConfigurationError(
+            f"StrategyVersion's data requirement needs at least {required_historical_depth_bars} "
+            f"bars of historical depth, but the supplied MarketDataset only has "
+            f"{market_dataset.record_count} -- refusing to replay against an insufficient dataset"
+        )
+
+
 def _recompute_and_check_plan_fingerprint(
     executable_plan: ExecutableStrategyPlan, *, strategy_semantic_fingerprint: str, research_configuration: ResearchConfiguration
 ) -> str:
@@ -464,19 +509,26 @@ def run_preflight(
     """
     # CA-006B-1: the entry specification is derived EXCLUSIVELY from the
     # compiled plan's own semantic_payload (capability check #8, strategy-shape half).
-    entry_signal_spec = check_plan_capability(executable_plan)
+    resolved_plan_capability = check_plan_capability(executable_plan)
+    entry_signal_spec = resolved_plan_capability.entry_signal_spec
     condition_timeframe_code = plan_condition_timeframe_code(executable_plan)
 
     # Independently recompute StrategyVersion's own semantic identity --
     # never trust the stored .semantic_fingerprint field at face value.
     strategy_semantic_fingerprint = _recompute_strategy_semantic_fingerprint(strategy_version)
     _check_strategy_plan_provenance(strategy_version, executable_plan, strategy_semantic_fingerprint=strategy_semantic_fingerprint)
+    # CA-006B-7: source-identity agreement alone is insufficient -- prove
+    # the plan's ACTUAL semantic_payload content matches what compiling
+    # strategy_version would really produce, not merely that its
+    # source-identity fields and self-consistent fingerprint agree.
+    _check_plan_payload_matches_strategy_version(strategy_version, executable_plan)
 
     _check_configuration_instrument(research_configuration, instrument_definition)  # check #2 (+ CA-006B-2 bullets 4/5)
     _check_input_bindings_match_dataset(research_configuration, market_dataset)  # check #3
     _check_dataset_fingerprint_recomputes(market_dataset)  # check #4
     _check_instrument_definition_agreement(market_dataset, instrument_definition)  # check #5
     _check_timeframe_agreement(market_dataset, condition_timeframe_code)  # check #6
+    _check_historical_depth(market_dataset, required_historical_depth_bars=resolved_plan_capability.required_historical_depth_bars)  # CA-006B-8
 
     executable_strategy_plan_fingerprint = _recompute_and_check_plan_fingerprint(
         executable_plan, strategy_semantic_fingerprint=strategy_semantic_fingerprint, research_configuration=research_configuration

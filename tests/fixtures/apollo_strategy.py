@@ -112,7 +112,7 @@ TAKE_PROFIT_PARAMETER_ID = "take_profit_distance_usd"
 UTC_2026_01_05 = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
 
 
-def apollo_h1_ohlcv_requirement() -> DataRequirement:
+def apollo_h1_ohlcv_requirement(*, required_depth_bars: int = 1) -> DataRequirement:
     return DataRequirement(
         requirement_id=APOLLO_REQUIREMENT_ID,
         display_name="XAU_USD H1 HERMES canonical OHLCV bars",
@@ -121,7 +121,7 @@ def apollo_h1_ohlcv_requirement() -> DataRequirement:
         authority_class=DataAuthorityClass.HERMES_CANONICAL_MARKET,
         instrument_applicability=("XAU_USD",),
         timeframe=SpecTimeframe("H1"),
-        required_historical_depth=HistoricalDepthRequirement(count=1, unit=HistoricalDepthUnit.BARS),
+        required_historical_depth=HistoricalDepthRequirement(count=required_depth_bars, unit=HistoricalDepthUnit.BARS),
         units="USD_PER_TROY_OUNCE",
         required_fields=("OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"),
         causal_timing_policy=CausalTimingPolicy.NOT_APPLICABLE,
@@ -171,7 +171,9 @@ def apollo_risk_parameter_definitions() -> tuple[ParameterDefinition, ...]:
     )
 
 
-def build_apollo_draft(*, draft_id: str, candidate_id: str, composition: AtomicCondition | None = None) -> SpecificationDraft:
+def build_apollo_draft(
+    *, draft_id: str, candidate_id: str, composition: AtomicCondition | None = None, required_depth_bars: int = 1
+) -> SpecificationDraft:
     condition = composition or apollo_entry_condition()
     draft = SpecificationDraft(
         draft_id=draft_id,
@@ -188,7 +190,7 @@ def build_apollo_draft(*, draft_id: str, candidate_id: str, composition: AtomicC
     )
     for definition in apollo_risk_parameter_definitions():
         draft.set_parameter(definition)
-    draft.set_data_requirement(apollo_h1_ohlcv_requirement())
+    draft.set_data_requirement(apollo_h1_ohlcv_requirement(required_depth_bars=required_depth_bars))
     from darwin.specification.composition import all_leaf_conditions
 
     for leaf in all_leaf_conditions(condition):
